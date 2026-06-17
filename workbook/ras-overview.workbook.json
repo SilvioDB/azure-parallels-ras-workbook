@@ -1,0 +1,502 @@
+{
+  "version": "Notebook/1.0",
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json",
+  "isLocked": false,
+  "fallbackResourceIds": [],
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "## Parallels RAS — Infrastructure Overview\n\n_Designed and developed by **Silvio Di Benedetto**, CEO at Inside Technologies, Microsoft MVP and Parallels VIPP._\n\n---\n\nThis workbook provides full-stack monitoring of a **Parallels RAS 20.x / 21.x** farm connected to Azure Monitor via two independent pipelines:\n\n- **Pipeline A — Windows telemetry (Azure Monitor Agent):** performance counters (CPU, RAM, disk, network, Terminal Services sessions) and Windows Event Log entries are collected by AMA on all farm servers (Azure Arc-enabled) and streamed into the native `Perf` and `Event` tables.\n- **Pipeline B — RAS-specific data (PowerShell + Logs Ingestion API):** a scheduled PowerShell script running on the Connection Broker queries the Parallels RAS API every 5 minutes and publishes structured JSON payloads to four custom tables: `RASServer_CL` (server inventory and roles), `RASAgent_CL` (agent versions per server), `RASSession_CL` (active RDP sessions), `RASAudit_CL` (administrator sessions and audit events).\n\nCredentials are stored in **Azure Key Vault**; the collector authenticates to Azure using the server's **Managed Identity** — no secrets are stored in scripts or Task Scheduler.\n\n**Tabs:**\n- **Overview** — KPI tiles (monitored servers, active sessions, error events, distinct agent versions) and a per-server summary with CPU, RAM and recent error count.\n- **Events** — Parallels RAS application events only (all providers), filtered from the Windows Event Log by source name.\n- **Services & Versions** — server coverage by role, agent version distribution (donut) and full agent inventory grid.\n- **Performance** — CPU and RAM time-series charts, split by role: Session Host (RDSH) vs other roles (Broker, Gateway, Provider). Session counter chart for RDSH servers.\n- **Sessions** — real-time snapshot of active RDP sessions (last 10 minutes): by state, by host and full session detail table.\n- **Audit** — administrator activity: actions by admin user, events by source, and full audit log grid.\n\nData sources: `Perf` · `Event` (Azure Monitor Agent) + `RASServer_CL` · `RASAgent_CL` · `RASSession_CL` · `RASAudit_CL` (Logs Ingestion API)."
+      },
+      "name": "header"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "p-timerange",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "value": { "durationMs": 86400000 },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 3600000 },
+                { "durationMs": 14400000 },
+                { "durationMs": 43200000 },
+                { "durationMs": 86400000 },
+                { "durationMs": 604800000 },
+                { "durationMs": 2592000000 }
+              ]
+            }
+          },
+          {
+            "id": "p-farm",
+            "version": "KqlParameterItem/1.0",
+            "name": "Farm",
+            "label": "Farm",
+            "type": 2,
+            "isRequired": false,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "query": "RASServer_CL | where isnotempty(FarmName) | distinct FarmName | order by FarmName asc",
+            "typeSettings": { "additionalResourceOptions": [ "value::all" ], "showDefault": false },
+            "value": [ "value::all" ],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "p-tab",
+            "version": "KqlParameterItem/1.0",
+            "name": "tab",
+            "type": 1,
+            "isHiddenWhenLocked": true,
+            "value": "overview"
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 11,
+      "content": {
+        "version": "LinkItem/1.0",
+        "style": "tabs",
+        "links": [
+          { "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Overview", "subTarget": "overview", "preText": "", "style": "link" },
+          { "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Events", "subTarget": "events", "style": "link" },
+          { "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Services & Versions", "subTarget": "services", "style": "link" },
+          { "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Performance", "subTarget": "perf", "style": "link" },
+          { "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Sessions", "subTarget": "sessions", "style": "link" },
+          { "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Audit", "subTarget": "audit", "style": "link" }
+        ]
+      },
+      "name": "tabs"
+    },
+
+    {
+      "type": 12,
+      "conditionalVisibility": { "parameterName": "tab", "comparison": "isEqualTo", "value": "overview" },
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "union\n(RASServer_CL | where Role !in ('RDSGroup','VDITemplate','VDIPool') | summarize arg_max(TimeGenerated, *) by Computer | summarize v = dcount(Computer) | extend Metric = 'Monitored servers', o = 1),\n(RASSession_CL | where TimeGenerated > ago(10m) | summarize arg_max(TimeGenerated, *) by Computer, SessionId | summarize v = count() | extend Metric = 'Active sessions', o = 2),\n(Event | where TimeGenerated {TimeRange} | where Source startswith 'Parallels' or Source == '2X Remote Application Server' | where EventLevelName in ('Error','Critical') | summarize v = count() | extend Metric = 'Error/Critical events', o = 3),\n(RASAgent_CL | summarize arg_max(TimeGenerated, *) by Computer | summarize v = dcount(AgentVersion) | extend Metric = 'Distinct agent versions', o = 4)\n| order by o asc\n| project Metric, v",
+              "size": 3,
+              "title": "Key indicators",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": { "columnMatch": "Metric", "formatter": 1 },
+                "leftContent": {
+                  "columnMatch": "v",
+                  "formatter": 12,
+                  "formatOptions": { "palette": "blue" },
+                  "numberFormat": { "unit": 17, "options": { "style": "decimal", "maximumFractionDigits": 0 } }
+                },
+                "showBorder": true,
+                "size": "auto"
+              }
+            },
+            "name": "kpi-tiles"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let norm = (n:string) { iff(n matches regex @'^\\d+\\.\\d', tolower(n), tolower(tostring(split(n, '.')[0]))) };\nlet providerMap = RASServer_CL | where Role == 'Provider' and isnotempty(IPAddress) | summarize arg_max(TimeGenerated, *) by IPAddress | project IPAddress, ProviderName = tolower(tostring(split(Computer, '.')[0]));\nlet srv = RASServer_CL | where Role !in ('RDSGroup','VDITemplate','VDIPool') | summarize arg_max(TimeGenerated, *) by Computer, Role | lookup kind=leftouter providerMap on IPAddress | extend NK = iff(Role == 'Provider' and isnotempty(ProviderName), ProviderName, norm(Computer));\nlet cpu = Perf | where TimeGenerated > ago(30m) | where ObjectName == 'Processor Information' and CounterName == '% Processor Time' | summarize CPU = avg(CounterValue) by NK = norm(Computer);\nlet mem = Perf | where TimeGenerated > ago(30m) | where CounterName == '% Committed Bytes In Use' | summarize RAM = avg(CounterValue) by NK = norm(Computer);\nlet ev  = Event | where TimeGenerated > ago(24h) | where Source startswith 'Parallels' or Source == '2X Remote Application Server' | where EventLevelName in ('Error','Critical') | summarize Events24h = count() by NK = norm(Computer);\nsrv\n| summarize Roles = strcat_array(make_set(Role), ', '), AgentVersion = any(AgentVersion), FarmName = any(FarmName), Computer = max(Computer) by NK\n| join kind=leftouter cpu on NK\n| join kind=leftouter mem on NK\n| join kind=leftouter ev on NK\n| project Computer, FarmName, Roles, AgentVersion, CPU = round(CPU, 0), RAM = round(RAM, 0), Events24h = coalesce(Events24h, 0)\n| order by Events24h desc",
+              "size": 0,
+              "title": "Server details",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  { "columnMatch": "CPU", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 1, "options": { "style": "decimal", "maximumFractionDigits": 0 } } },
+                  { "columnMatch": "RAM", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 1, "options": { "style": "decimal", "maximumFractionDigits": 0 } } },
+                  { "columnMatch": "Events24h", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [ { "operator": ">", "thresholdValue": "0", "representation": "4", "text": "{0}{1}" }, { "operator": "Default", "representation": "success", "text": "{0}{1}" } ] } }
+                ]
+              }
+            },
+            "name": "server-detail"
+          }
+        ]
+      },
+      "name": "group-overview"
+    },
+
+    {
+      "type": 12,
+      "conditionalVisibility": { "parameterName": "tab", "comparison": "isEqualTo", "value": "events" },
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Event\n| where TimeGenerated {TimeRange}\n| where Source startswith \"Parallels\" or Source == \"2X Remote Application Server\"\n| summarize Count = count() by EventLevelName\n| order by Count desc",
+              "size": 1,
+              "title": "Events by severity",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "piechart",
+              "chartSettings": { "showLegend": true, "ySettings": { "numberFormatSettings": { "unit": 17 } } }
+            },
+            "customWidth": "40",
+            "name": "events-by-severity"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Event\n| where TimeGenerated {TimeRange}\n| where Source startswith \"Parallels\" or Source == \"2X Remote Application Server\"\n| summarize Count = count() by bin(TimeGenerated, 1h), EventLevelName\n| order by TimeGenerated asc",
+              "size": 1,
+              "title": "Event trend over time",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "barchart",
+              "chartSettings": { "createOtherGroup": null, "stacked": true }
+            },
+            "customWidth": "60",
+            "name": "events-trend"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Event\n| where TimeGenerated {TimeRange}\n| where Source startswith \"Parallels\" or Source == \"2X Remote Application Server\"\n| project TimeGenerated, Computer, EventLevelName, EventID, Source, Message = substring(RenderedDescription, 0, 200)\n| order by TimeGenerated desc\n| take 300",
+              "size": 0,
+              "title": "Recent events",
+              "showExportToExcel": true,
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "table",
+              "gridSettings": {
+                "filter": true,
+                "formatters": [
+                  {
+                    "columnMatch": "EventLevelName",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        { "operator": "==", "thresholdValue": "Critical", "representation": "Sev0", "text": "{0}{1}" },
+                        { "operator": "==", "thresholdValue": "Error", "representation": "4", "text": "{0}{1}" },
+                        { "operator": "==", "thresholdValue": "Warning", "representation": "3", "text": "{0}{1}" },
+                        { "operator": "==", "thresholdValue": "Information", "representation": "success", "text": "{0}{1}" },
+                        { "operator": "Default", "representation": "info", "text": "{0}{1}" }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "events-grid"
+          }
+        ]
+      },
+      "name": "group-events"
+    },
+
+    {
+      "type": 12,
+      "conditionalVisibility": { "parameterName": "tab", "comparison": "isEqualTo", "value": "services" },
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASServer_CL\n| where Role !in ('RDSGroup','VDITemplate','VDIPool')\n| summarize arg_max(TimeGenerated, *) by Computer, Role\n| summarize Servers = dcount(Computer) by Role\n| order by Servers desc",
+              "size": 1,
+              "title": "Server coverage by role",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "barchart",
+              "chartSettings": { "ySettings": { "numberFormatSettings": { "unit": 17 } } }
+            },
+            "customWidth": "50",
+            "name": "role-coverage"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASAgent_CL\n| where isnotempty(AgentVersion)\n| summarize arg_max(TimeGenerated, *) by Computer\n| summarize Servers = count() by AgentVersion\n| order by Servers desc",
+              "size": 1,
+              "title": "Agent version distribution",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "piechart",
+              "chartSettings": { "showLegend": true }
+            },
+            "customWidth": "50",
+            "name": "agent-versions"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASAgent_CL\n| where isnotempty(AgentVersion)\n| extend NK = tolower(tostring(split(Computer, '.')[0]))\n| summarize arg_max(TimeGenerated, *) by NK, AgentType\n| project Computer, SiteName, AgentType, AgentState, AgentVersion, OSVersion\n| order by Computer asc",
+              "size": 0,
+              "title": "Installed agents",
+              "showExportToExcel": true,
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "table",
+              "gridSettings": {
+                "filter": true,
+                "formatters": [
+                  {
+                    "columnMatch": "AgentState",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        { "operator": "contains", "thresholdValue": "OK", "representation": "success", "text": "{0}{1}" },
+                        { "operator": "contains", "thresholdValue": "Verified", "representation": "success", "text": "{0}{1}" },
+                        { "operator": "contains", "thresholdValue": "NeedsUpdate", "representation": "3", "text": "{0}{1}" },
+                        { "operator": "contains", "thresholdValue": "Update", "representation": "3", "text": "{0}{1}" },
+                        { "operator": "Default", "representation": "4", "text": "{0}{1}" }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "agents-grid"
+          }
+        ]
+      },
+      "name": "group-services"
+    },
+
+    {
+      "type": 12,
+      "conditionalVisibility": { "parameterName": "tab", "comparison": "isEqualTo", "value": "perf" },
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 1,
+            "content": { "json": "### Session Host (RDSH)\nAggregated averages for servers with Session Host role only (join `Perf` ↔ `RASServer_CL`)." },
+            "name": "perf-rdsh-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let norm = (n:string) { iff(n matches regex @'^\\d+\\.\\d', tolower(n), tolower(tostring(split(n, '.')[0]))) };\nlet hosts = RASServer_CL | where Role == 'RDSH' | summarize arg_max(TimeGenerated, *) by Computer | distinct norm(Computer);\nPerf\n| where TimeGenerated {TimeRange}\n| where norm(Computer) in (hosts)\n| where ObjectName == 'Processor Information' and CounterName == '% Processor Time'\n| summarize CPU = avg(CounterValue) by bin(TimeGenerated, 5m), Computer\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "CPU % — Session Host",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-rdsh-cpu"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let norm = (n:string) { iff(n matches regex @'^\\d+\\.\\d', tolower(n), tolower(tostring(split(n, '.')[0]))) };\nlet hosts = RASServer_CL | where Role == 'RDSH' | summarize arg_max(TimeGenerated, *) by Computer | distinct norm(Computer);\nPerf\n| where TimeGenerated {TimeRange}\n| where norm(Computer) in (hosts)\n| where CounterName == 'Active Sessions'\n| summarize Sessions = avg(CounterValue) by bin(TimeGenerated, 5m), Computer\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "Active Sessions — Session Host",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-rdsh-sessions"
+          },
+          {
+            "type": 1,
+            "content": { "json": "### Other roles (Gateway / Broker / Provider)\nAggregated averages for servers with roles other than Session Host." },
+            "name": "perf-other-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let norm = (n:string) { iff(n matches regex @'^\\d+\\.\\d', tolower(n), tolower(tostring(split(n, '.')[0]))) };\nlet rdsh = RASServer_CL | where Role == 'RDSH' | summarize arg_max(TimeGenerated, *) by Computer | distinct norm(Computer);\nPerf\n| where TimeGenerated {TimeRange}\n| where norm(Computer) !in (rdsh)\n| where ObjectName == 'Processor Information' and CounterName == '% Processor Time'\n| summarize CPU = avg(CounterValue) by bin(TimeGenerated, 5m), Computer\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "CPU % — other roles",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-other-cpu"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let norm = (n:string) { iff(n matches regex @'^\\d+\\.\\d', tolower(n), tolower(tostring(split(n, '.')[0]))) };\nlet rdsh = RASServer_CL | where Role == 'RDSH' | summarize arg_max(TimeGenerated, *) by Computer | distinct norm(Computer);\nPerf\n| where TimeGenerated {TimeRange}\n| where norm(Computer) !in (rdsh)\n| where CounterName == '% Committed Bytes In Use'\n| summarize RAM = avg(CounterValue) by bin(TimeGenerated, 5m), Computer\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "RAM committed % — other roles",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-other-ram"
+          }
+        ]
+      },
+      "name": "group-perf"
+    },
+
+    {
+      "type": 12,
+      "conditionalVisibility": { "parameterName": "tab", "comparison": "isEqualTo", "value": "sessions" },
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSession_CL\n| where TimeGenerated > ago(10m)\n| summarize arg_max(TimeGenerated, *) by Computer, SessionId\n| summarize Sessions = count() by SessionState\n| order by Sessions desc",
+              "size": 1,
+              "title": "Sessions by state",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "piechart"
+            },
+            "customWidth": "35",
+            "name": "sessions-by-state"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSession_CL\n| where TimeGenerated > ago(10m)\n| summarize arg_max(TimeGenerated, *) by Computer, SessionId\n| summarize Sessions = count() by Computer\n| order by Sessions desc",
+              "size": 1,
+              "title": "Sessions by host",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "barchart"
+            },
+            "customWidth": "65",
+            "name": "sessions-by-host"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSession_CL\n| where TimeGenerated > ago(10m)\n| summarize arg_max(TimeGenerated, *) by Computer, SessionId\n| project LogonTime, UserName, Computer, SiteName, ClientName, ClientIP, SessionState, SessionType, PublishedResource, IdleTimeSec\n| order by LogonTime desc",
+              "size": 0,
+              "title": "Active sessions",
+              "showExportToExcel": true,
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "table",
+              "gridSettings": {
+                "filter": true,
+                "formatters": [
+                  {
+                    "columnMatch": "SessionState",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        { "operator": "contains", "thresholdValue": "Active", "representation": "success", "text": "{0}{1}" },
+                        { "operator": "contains", "thresholdValue": "Disconnected", "representation": "3", "text": "{0}{1}" },
+                        { "operator": "Default", "representation": "info", "text": "{0}{1}" }
+                      ]
+                    }
+                  },
+                  { "columnMatch": "IdleTimeSec", "formatter": 0, "numberFormat": { "unit": 23, "options": { "style": "decimal" } } }
+                ]
+              }
+            },
+            "name": "sessions-grid"
+          }
+        ]
+      },
+      "name": "group-sessions"
+    },
+
+    {
+      "type": 12,
+      "conditionalVisibility": { "parameterName": "tab", "comparison": "isEqualTo", "value": "audit" },
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASAudit_CL\n| where TimeGenerated {TimeRange}\n| summarize Actions = count() by AdminUser\n| order by Actions desc\n| take 15",
+              "size": 1,
+              "title": "Activity by administrator",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "barchart"
+            },
+            "customWidth": "50",
+            "name": "audit-by-admin"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASAudit_CL\n| where TimeGenerated {TimeRange}\n| summarize Count = count() by Source\n| order by Count desc",
+              "size": 1,
+              "title": "Audit events by source",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "piechart"
+            },
+            "customWidth": "50",
+            "name": "audit-by-source"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASAudit_CL\n| where TimeGenerated {TimeRange}\n| project TimeGenerated, AdminUser, Action, ObjectType, ObjectName, Result, ClientIP, Source\n| order by TimeGenerated desc\n| take 300",
+              "size": 0,
+              "title": "Administrator / operator audit log",
+              "showExportToExcel": true,
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "table",
+              "gridSettings": { "filter": true }
+            },
+            "name": "audit-grid"
+          },
+          {
+            "type": 1,
+            "content": { "json": "> **Note:** Detailed configuration change audit resides in the **RAS Reporting DB**. This view shows admin sessions collected via PowerShell + Connection Broker events from the Windows channel." },
+            "name": "audit-note"
+          }
+        ]
+      },
+      "name": "group-audit"
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "westeurope"
+    },
+    "workload": {
+      "value": "ras"
+    },
+    "environment": {
+      "value": "prod"
+    },
+    "regionCode": {
+      "value": "weu"
+    },
+    "workspaceName": {
+      "value": "service-loganalytics-parallels"
+    },
+    "retentionInDays": {
+      "value": 30
+    },
+    "samplingFrequencyInSeconds": {
+      "value": 60
+    },
+    "keyVaultName": {
+      "value": "kv-ras-prod-weu"
+    },
+    "machines": {
+      "value": [
+        {
+          "name": "<ARC-SERVER-1>",
+          "kind": "arc",
+          "subscriptionId": "<SUBSCRIPTION-ID>",
+          "resourceGroup": "<RESOURCE-GROUP-OF-ARC-MACHINES>"
+        },
+        {
+          "name": "<ARC-SERVER-2>",
+          "kind": "arc",
+          "subscriptionId": "<SUBSCRIPTION-ID>",
+          "resourceGroup": "<RESOURCE-GROUP-OF-ARC-MACHINES>"
+        }
+      ]
+    },
+    "collectorPrincipalIds": {
+      "value": [
+        "<MANAGED-IDENTITY-OBJECT-ID-OF-COLLECTOR-HOST>"
+      ]
+    }
+  }
+}

@@ -1,0 +1,16 @@
+# Parameters file with real values — use main.parameters.example.json as template
+bicep/main.parameters.json
+
+# Collector output and test files (may contain real resource names / data)
+collector/whatif-output.txt
+collector/RasFieldTest.txt
+collector/Test-DryRunOutput.ps1
+
+# ARM compiled output — regenerate with: az bicep build --file bicep/main.bicep
+bicep/main.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/settings.json
