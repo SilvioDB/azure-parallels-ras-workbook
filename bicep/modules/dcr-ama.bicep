@@ -79,6 +79,16 @@ resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
             'Application!*[System[Provider[@Name=\'2X Remote Application Server\']]]'
           ]
         }
+        {
+          // Terminal Services session lifecycle events on RDSH hosts.
+          // Complements RASSession_CL (API polling) with exact logon/logoff timestamps.
+          // EventID 21=logon, 23=logoff, 24=disconnect, 25=reconnect, 40=disconnect+reason.
+          name: 'tsSessionEvents'
+          streams: [ 'Microsoft-Event' ]
+          xPathQueries: [
+            'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational!*[System[(EventID=21 or EventID=23 or EventID=24 or EventID=25 or EventID=40)]]'
+          ]
+        }
       ]
     }
     destinations: {

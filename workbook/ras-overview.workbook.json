@@ -94,7 +94,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "union\n(RASServer_CL | where Role !in ('RDSGroup','VDITemplate','VDIPool') | summarize arg_max(TimeGenerated, *) by Computer | summarize v = dcount(Computer) | extend Metric = 'Monitored servers', o = 1),\n(RASSession_CL | where TimeGenerated > ago(10m) | summarize arg_max(TimeGenerated, *) by Computer, SessionId | summarize v = count() | extend Metric = 'Active sessions', o = 2),\n(Event | where TimeGenerated {TimeRange} | where Source startswith 'Parallels' or Source == '2X Remote Application Server' | where EventLevelName in ('Error','Critical') | summarize v = count() | extend Metric = 'Error/Critical events', o = 3),\n(RASAgent_CL | summarize arg_max(TimeGenerated, *) by Computer | summarize v = dcount(AgentVersion) | extend Metric = 'Distinct agent versions', o = 4)\n| order by o asc\n| project Metric, v",
+              "query": "union\n(RASServer_CL | where Role !in ('RDSGroup','VDITemplate','VDIPool') | summarize arg_max(TimeGenerated, *) by Computer | summarize v = dcount(Computer) | extend Metric = 'Monitored servers', o = 1),\n(RASSession_CL | where TimeGenerated > ago(10m) | summarize arg_max(TimeGenerated, *) by Computer, SessionId | summarize v = count() | extend Metric = 'Active sessions', o = 2),\n(Event | where TimeGenerated {TimeRange} | where (Source startswith 'Parallels' or Source == '2X Remote Application Server') or (Source == 'Microsoft-Windows-TerminalServices-LocalSessionManager' and EventID in (21, 23, 24, 25, 40)) | where EventLevelName in ('Error','Critical') | summarize v = count() | extend Metric = 'Error/Critical events', o = 3),\n(RASAgent_CL | summarize arg_max(TimeGenerated, *) by Computer | summarize v = dcount(AgentVersion) | extend Metric = 'Distinct agent versions', o = 4)\n| order by o asc\n| project Metric, v",
               "size": 3,
               "title": "Key indicators",
               "queryType": 0,
@@ -118,7 +118,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "let norm = (n:string) { iff(n matches regex @'^\\d+\\.\\d', tolower(n), tolower(tostring(split(n, '.')[0]))) };\nlet providerMap = RASServer_CL | where Role == 'Provider' and isnotempty(IPAddress) | summarize arg_max(TimeGenerated, *) by IPAddress | project IPAddress, ProviderName = tolower(tostring(split(Computer, '.')[0]));\nlet srv = RASServer_CL | where Role !in ('RDSGroup','VDITemplate','VDIPool') | summarize arg_max(TimeGenerated, *) by Computer, Role | lookup kind=leftouter providerMap on IPAddress | extend NK = iff(Role == 'Provider' and isnotempty(ProviderName), ProviderName, norm(Computer));\nlet cpu = Perf | where TimeGenerated > ago(30m) | where ObjectName == 'Processor Information' and CounterName == '% Processor Time' | summarize CPU = avg(CounterValue) by NK = norm(Computer);\nlet mem = Perf | where TimeGenerated > ago(30m) | where CounterName == '% Committed Bytes In Use' | summarize RAM = avg(CounterValue) by NK = norm(Computer);\nlet ev  = Event | where TimeGenerated > ago(24h) | where Source startswith 'Parallels' or Source == '2X Remote Application Server' | where EventLevelName in ('Error','Critical') | summarize Events24h = count() by NK = norm(Computer);\nsrv\n| summarize Roles = strcat_array(make_set(Role), ', '), AgentVersion = any(AgentVersion), FarmName = any(FarmName), Computer = max(Computer) by NK\n| join kind=leftouter cpu on NK\n| join kind=leftouter mem on NK\n| join kind=leftouter ev on NK\n| project Computer, FarmName, Roles, AgentVersion, CPU = round(CPU, 0), RAM = round(RAM, 0), Events24h = coalesce(Events24h, 0)\n| order by Events24h desc",
+              "query": "let norm = (n:string) { iff(n matches regex @'^\\d+\\.\\d', tolower(n), tolower(tostring(split(n, '.')[0]))) };\nlet providerMap = RASServer_CL | where Role == 'Provider' and isnotempty(IPAddress) | summarize arg_max(TimeGenerated, *) by IPAddress | project IPAddress, ProviderName = tolower(tostring(split(Computer, '.')[0]));\nlet srv = RASServer_CL | where Role !in ('RDSGroup','VDITemplate','VDIPool') | summarize arg_max(TimeGenerated, *) by Computer, Role | lookup kind=leftouter providerMap on IPAddress | extend NK = iff(Role == 'Provider' and isnotempty(ProviderName), ProviderName, norm(Computer));\nlet cpu = Perf | where TimeGenerated > ago(30m) | where ObjectName == 'Processor Information' and CounterName == '% Processor Time' | summarize CPU = avg(CounterValue) by NK = norm(Computer);\nlet mem = Perf | where TimeGenerated > ago(30m) | where CounterName == '% Committed Bytes In Use' | summarize RAM = avg(CounterValue) by NK = norm(Computer);\nlet ev  = Event | where TimeGenerated > ago(24h) | where (Source startswith 'Parallels' or Source == '2X Remote Application Server') or (Source == 'Microsoft-Windows-TerminalServices-LocalSessionManager' and EventID in (21, 23, 24, 25, 40)) | where EventLevelName in ('Error','Critical') | summarize Events24h = count() by NK = norm(Computer);\nsrv\n| summarize Roles = strcat_array(make_set(Role), ', '), AgentVersion = any(AgentVersion), FarmName = any(FarmName), Computer = max(Computer) by NK\n| join kind=leftouter cpu on NK\n| join kind=leftouter mem on NK\n| join kind=leftouter ev on NK\n| project Computer, FarmName, Roles, AgentVersion, CPU = round(CPU, 0), RAM = round(RAM, 0), Events24h = coalesce(Events24h, 0)\n| order by Events24h desc",
               "size": 0,
               "title": "Server details",
               "queryType": 0,
@@ -150,7 +150,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "Event\n| where TimeGenerated {TimeRange}\n| where Source startswith \"Parallels\" or Source == \"2X Remote Application Server\"\n| summarize Count = count() by EventLevelName\n| order by Count desc",
+              "query": "Event\n| where TimeGenerated {TimeRange}\n| where (Source startswith \"Parallels\" or Source == \"2X Remote Application Server\") or (Source == \"Microsoft-Windows-TerminalServices-LocalSessionManager\" and EventID in (21, 23, 24, 25, 40))\n| summarize Count = count() by EventLevelName\n| order by Count desc",
               "size": 1,
               "title": "Events by severity",
               "queryType": 0,
@@ -165,7 +165,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "Event\n| where TimeGenerated {TimeRange}\n| where Source startswith \"Parallels\" or Source == \"2X Remote Application Server\"\n| summarize Count = count() by bin(TimeGenerated, 1h), EventLevelName\n| order by TimeGenerated asc",
+              "query": "Event\n| where TimeGenerated {TimeRange}\n| where (Source startswith \"Parallels\" or Source == \"2X Remote Application Server\") or (Source == \"Microsoft-Windows-TerminalServices-LocalSessionManager\" and EventID in (21, 23, 24, 25, 40))\n| summarize Count = count() by bin(TimeGenerated, 1h), EventLevelName\n| order by TimeGenerated asc",
               "size": 1,
               "title": "Event trend over time",
               "queryType": 0,
@@ -180,7 +180,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "Event\n| where TimeGenerated {TimeRange}\n| where Source startswith \"Parallels\" or Source == \"2X Remote Application Server\"\n| project TimeGenerated, Computer, EventLevelName, EventID, Source, Message = substring(RenderedDescription, 0, 200)\n| order by TimeGenerated desc\n| take 300",
+              "query": "Event\n| where TimeGenerated {TimeRange}\n| where (Source startswith \"Parallels\" or Source == \"2X Remote Application Server\") or (Source == \"Microsoft-Windows-TerminalServices-LocalSessionManager\" and EventID in (21, 23, 24, 25, 40))\n| project TimeGenerated, Computer, EventLevelName, EventID, Source, Message = substring(RenderedDescription, 0, 200)\n| order by TimeGenerated desc\n| take 300",
               "size": 0,
               "title": "Recent events",
               "showExportToExcel": true,
