@@ -6,7 +6,10 @@ Blog: https://www.silviodibenedetto.com
 IaC package + collector to monitor a **Parallels Remote Application Server** (20.x → 21.x) farm in
 **Azure Monitor / Log Analytics**, with a **six-tab Azure Workbook**.
 
-Scenario: on-premises servers onboarded to **Azure Arc** (AMA 1.42+ included by default).
+Current Workbook build: **`2026.06.20.3`**.
+
+Scenario: on-premises servers onboarded to **Azure Arc** or Azure VMs, with the
+**Azure Monitor Agent (AMA)** installed and associated with the supplied DCR.
 
 ---
 
@@ -29,7 +32,8 @@ Data arrives from **two distinct pipelines**:
   ┌─────────────────────────┴──────┐    ┌─────────────┴────────────────────────┐
   │  Azure Monitor Agent (AMA)      │    │  Collect-RasInventory.ps1             │
   │  dcr-ras-prod-weu-ama           │    │  scheduled task every 5 min           │
-  │  • performanceCounters → Perf   │    │  on the Connection Broker host         │
+  │  • OS + native RAS counters      │    │  on the Connection Broker host         │
+  │    → Perf                        │    │                                       │
   │  • windowsEventLogs    → Event  │    │                                       │
   │                                 │    │  RAS PowerShell API:                   │
   │  Associated to Arc servers      │    │   Get-RASAgent / Get-RASRDSession /   │
@@ -47,11 +51,40 @@ Data arrives from **two distinct pipelines**:
 
 DCR `kind: Windows` (`dcr-ras-prod-weu-ama`) collects performance counters and Event Log
 and sends them to the native tables `Perf` and `Event`.
-The DCR is associated to each Arc server. AMA 1.42+ is already included with Arc and
-requires no separate installation.
+The DCR is associated with each Arc server or Azure VM listed in `machines`.
+
+Performance counters are kept in three separate DCR sources:
+
+- `perfCommon`: Windows CPU, memory, disk, network and system health;
+- `perfRds`: Windows Terminal Services and process counters;
+- `perfRas`: native Parallels RAS Connection Broker, Secure Gateway and RDS Agent counters.
+
+AMA is separate from the Azure Connected Machine agent. This template creates the DCR
+association but does **not** deploy the AMA extension; install AMA beforehand or enforce it
+with Azure Policy.
 
 > Role separation in the Workbook (Performance tab) is done via a
 > **KQL join** between `Perf` and `RASServer_CL` on the computer name.
+
+### Native Parallels RAS performance counters
+
+The `perfRas` source extends monitoring from operating-system health to RAS user experience
+and Gateway capacity. The Workbook deliberately keeps these charts separate from Windows
+and Terminal Services metrics:
+
+Counter names and meanings follow the
+[Parallels RAS 21 performance-counter reference](https://docs.parallels.com/landing/ras-admin-guide/parallels-ras-21-administrators-guide/appendix/ras-performance-counters).
+
+| Component | Workbook visibility |
+| --- | --- |
+| Connection Broker | Client connection, authentication, policy, published-item/icon and telemetry timing |
+| Secure Gateway | New connections per 5 minutes, native total/idle threads, RDP/web/client protocol distribution and cached sockets |
+| RDS Agent | Native active and disconnected RDS session gauges |
+
+The Gateway `Total connections` counter is cumulative. The Workbook calculates its positive
+delta and displays **new connections per 5-minute interval**, rather than presenting the raw
+lifetime value as concurrent connections. Broker timing counters retain their native values
+because Parallels does not document their unit.
 
 ### Pipeline B — RAS-specific data (PowerShell + Logs Ingestion API)
 
@@ -104,7 +137,8 @@ All resources are created in a single resource group (configurable), region `wes
 
 - **Azure CLI** with **Bicep** installed (`az bicep install`).
 - RAS servers onboarded to **Azure Arc** with **system-assigned managed identity** enabled.
-  AMA 1.42+ is pre-installed by default on Arc; no separate installation needed.
+- **Azure Monitor Agent** installed on every monitored RAS server. Azure Arc onboarding alone
+  does not install AMA; use the AMA extension or Azure Policy.
 - On the collector host (Connection Broker): **RASAdmin PowerShell module** (included with RAS Console).
 - A RAS service account with the **RAS Administrator** role (required by `Get-RASAdminSession`
   and `Get-RASAdminAccount`; custom/read-only roles are not sufficient).
@@ -145,9 +179,10 @@ Then edit `bicep/main.parameters.json` and replace every `<PLACEHOLDER>`:
 | `retentionInDays` | Log retention in the workspace (days) | `30` |
 | `samplingFrequencyInSeconds` | Perf counter sampling interval | `60` |
 | `keyVaultName` | Key Vault name (globally unique) | `kv-ras-prod-weu` |
-| `machines[].name` | Arc machine hostname (short name, no FQDN) | `MYSERVER01` |
-| `machines[].subscriptionId` | Azure subscription ID of each Arc machine | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
-| `machines[].resourceGroup` | Resource group where the Arc machine lives | `rg-arc-servers` |
+| `machines[].name` | Arc/VM resource name (normally short hostname) | `MYSERVER01` |
+| `machines[].kind` | Resource type: `arc` or `vm` | `arc` |
+| `machines[].subscriptionId` | Azure subscription ID of each machine | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
+| `machines[].resourceGroup` | Resource group containing the machine | `rg-arc-servers` |
 | `collectorPrincipalIds` | Object ID of the collector host Managed Identity | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
 
 To find the Managed Identity Object ID of an Arc machine:
@@ -158,6 +193,21 @@ az connectedmachine show `
   --resource-group <ARC-RESOURCE-GROUP> `
   --query "identity.principalId" -o tsv
 ```
+
+Before deployment, verify the native counter-set names on one server for each installed RAS role:
+
+```powershell
+Get-Counter -ListSet '*Parallels*' |
+  Select-Object CounterSetName, Paths
+```
+
+The DCR expects these Windows counter sets:
+
+- `Parallels RAS Connection Broker`
+- `Parallels RAS Secure Gateway`
+- `Parallels RAS RDS Agent`
+
+Only the counter sets belonging to components installed on a given machine are expected to exist.
 
 ---
 
@@ -201,6 +251,10 @@ az deployment group create `
   --parameters bicep/main.parameters.json `
   --name "ras-deploy-$(Get-Date -Format yyyyMMdd)"
 ```
+
+Resource-group deployments use ARM **incremental mode** by default: resources outside the
+template are not deleted, while resources declared by this project are reconciled to the
+properties in the Bicep files. Always review `what-if` before applying an update.
 
 Alternatively, using the compiled ARM JSON (no Bicep toolchain required):
 ```powershell
@@ -270,6 +324,20 @@ Perf
 | order by Computer asc
 ```
 
+Verify the native Parallels RAS counters separately:
+
+```kusto
+Perf
+| where TimeGenerated > ago(1h)
+| where ObjectName startswith "Parallels RAS"
+| summarize Samples=count(), Min=min(CounterValue), Avg=avg(CounterValue), Max=max(CounterValue)
+    by Computer, ObjectName, CounterName
+| order by ObjectName asc, CounterName asc
+```
+
+Zero values are valid when the component is idle. `No results` means that the counter has not
+arrived; verify AMA, the DCR association and the exact local paths returned by `Get-Counter`.
+
 ### Pipeline B (custom tables)
 
 ```kusto
@@ -308,6 +376,9 @@ The existing task is removed and recreated automatically.
 4. Click **Apply** → **Done editing** → **Save**.
 
 Or redeploy via Bicep (updates the `Microsoft.Insights/workbooks` resource).
+
+The active build is displayed directly below the Workbook title. After an update, confirm that
+the visible build matches the value in `workbook/ras-overview.workbook.json`.
 
 ### Rotate RAS credentials in Key Vault
 
@@ -377,6 +448,18 @@ azure-parallels-ras-workbook/
 - **Computer name consistency**: AMA writes `Computer` as FQDN (e.g.
   `server01.domain.local`); use `-ComputerNameStyle FQDN -DnsDomain ...`
   in the installer to align the `Computer` field in _CL tables.
+
+- **Native RAS counter availability**: each Windows counter set exists only where its RAS
+  component is installed. Missing Broker counters on a Gateway-only server, for example, are
+  expected and do not require changes to the PowerShell collector.
+
+- **Native timing units**: Parallels documents the Connection Broker counters as average times
+  but does not publish their unit. The Workbook therefore labels them as `native value` and does
+  not convert them to milliseconds.
+
+- **Gateway connection semantics**: `Total connections` is cumulative in the tested RAS 21
+  environment. The Workbook calculates positive deltas per 5-minute interval. Total and idle
+  threads are shown as separate native series; no undocumented utilization percentage is derived.
 
 - **DCR region must match Arc**: the DCR must be in the same region as the Arc servers.
   A DCR in a different region causes validation errors or missing data.
