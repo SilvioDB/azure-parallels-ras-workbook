@@ -7,7 +7,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## Parallels RAS — Infrastructure Overview\n\n_Designed and developed by **Silvio Di Benedetto**, CEO at Inside Technologies, Microsoft MVP and Parallels VIPP._\n\n---\n\nThis workbook provides full-stack monitoring of a **Parallels RAS 20.x / 21.x** farm connected to Azure Monitor via two independent pipelines:\n\n- **Pipeline A — Windows telemetry (Azure Monitor Agent):** performance counters (CPU, RAM, disk, network, Terminal Services sessions) and Windows Event Log entries are collected by AMA on all farm servers (Azure Arc-enabled) and streamed into the native `Perf` and `Event` tables.\n- **Pipeline B — RAS-specific data (PowerShell + Logs Ingestion API):** a scheduled PowerShell script running on the Connection Broker queries the Parallels RAS API every 5 minutes and publishes structured JSON payloads to four custom tables: `RASServer_CL` (server inventory and roles), `RASAgent_CL` (agent versions per server), `RASSession_CL` (active RDP sessions), `RASAudit_CL` (administrator sessions and audit events).\n\nCredentials are stored in **Azure Key Vault**; the collector authenticates to Azure using the server's **Managed Identity** — no secrets are stored in scripts or Task Scheduler.\n\n**Tabs:**\n- **Overview** — KPI tiles (monitored servers, active sessions, error events, distinct agent versions) and a per-server summary with CPU, RAM and recent error count.\n- **Events** — Parallels RAS application events only (all providers), filtered from the Windows Event Log by source name.\n- **Services & Versions** — server coverage by role, agent version distribution (donut) and full agent inventory grid.\n- **Performance** — CPU and RAM time-series charts, split by role: Session Host (RDSH) vs other roles (Broker, Gateway, Provider). Session counter chart for RDSH servers.\n- **Sessions** — real-time snapshot of active RDP sessions (last 10 minutes): by state, by host and full session detail table.\n- **Audit** — administrator activity: actions by admin user, events by source, and full audit log grid.\n\nData sources: `Perf` · `Event` (Azure Monitor Agent) + `RASServer_CL` · `RASAgent_CL` · `RASSession_CL` · `RASAudit_CL` (Logs Ingestion API)."
+        "json": "## Parallels RAS — Infrastructure Overview\n\n**Workbook build:** `2026.06.20.3`\n\n_Designed and developed by **Silvio Di Benedetto**, CEO at Inside Technologies, Microsoft MVP and Parallels VIPP._\n\n---\n\nThis workbook provides full-stack monitoring of a **Parallels RAS 20.x / 21.x** farm connected to Azure Monitor via two independent pipelines:\n\n- **Pipeline A — Windows telemetry (Azure Monitor Agent):** performance counters (CPU, RAM, disk, network, Terminal Services sessions) and Windows Event Log entries are collected by AMA on all farm servers (Azure Arc-enabled) and streamed into the native `Perf` and `Event` tables.\n- **Pipeline B — RAS-specific data (PowerShell + Logs Ingestion API):** a scheduled PowerShell script running on the Connection Broker queries the Parallels RAS API every 5 minutes and publishes structured JSON payloads to four custom tables: `RASServer_CL` (server inventory and roles), `RASAgent_CL` (agent versions per server), `RASSession_CL` (active RDP sessions), `RASAudit_CL` (administrator sessions and audit events).\n\nCredentials are stored in **Azure Key Vault**; the collector authenticates to Azure using the server's **Managed Identity** — no secrets are stored in scripts or Task Scheduler.\n\n**Tabs:**\n- **Overview** — KPI tiles (monitored servers, active sessions, error events, distinct agent versions) and a per-server summary with CPU, RAM and recent error count.\n- **Events** — Parallels RAS application events only (all providers), filtered from the Windows Event Log by source name.\n- **Services & Versions** — server coverage by role, agent version distribution (donut) and full agent inventory grid.\n- **Performance** — CPU and RAM time-series charts, split by role: Session Host (RDSH) vs other roles (Broker, Gateway, Provider). Session counter chart for RDSH servers.\n- **Sessions** — real-time snapshot of active RDP sessions (last 10 minutes): by state, by host and full session detail table.\n- **Audit** — administrator activity: actions by admin user, events by source, and full audit log grid.\n\nData sources: `Perf` · `Event` (Azure Monitor Agent) + `RASServer_CL` · `RASAgent_CL` · `RASSession_CL` · `RASAudit_CL` (Logs Ingestion API)."
       },
       "name": "header"
     },
@@ -361,6 +361,179 @@
             },
             "customWidth": "50",
             "name": "perf-other-ram"
+          },
+          {
+            "type": 1,
+            "content": { "json": "---\n### Native Parallels RAS performance counters\nProduct-level metrics registered by the installed RAS components. These panels are intentionally separate from Windows and Terminal Services health. Connection Broker time counters retain their native value because Parallels does not document their unit." },
+            "name": "perf-ras-header"
+          },
+          {
+            "type": 1,
+            "content": { "json": "#### Connection Broker — user experience\nEach chart covers one related phase of the client connection pipeline; values are not added together." },
+            "name": "perf-ras-broker-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Perf\n| where TimeGenerated {TimeRange}\n| where ObjectName == 'Parallels RAS Connection Broker'\n| where CounterName in ('Average time for client connection', 'Average time to start up a request')\n| summarize Value = avg(CounterValue) by bin(TimeGenerated, 5m), Computer, CounterName\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "Client connection and request start — native value",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-ras-broker-connection"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Perf\n| where TimeGenerated {TimeRange}\n| where ObjectName == 'Parallels RAS Connection Broker'\n| where CounterName in ('Average time for user authentication', 'Average time to retrieve user policy')\n| summarize Value = avg(CounterValue) by bin(TimeGenerated, 5m), Computer, CounterName\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "Authentication and policy retrieval — native value",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-ras-broker-auth-policy"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Perf\n| where TimeGenerated {TimeRange}\n| where ObjectName == 'Parallels RAS Connection Broker'\n| where CounterName in (\"Average time to retrieve user's published items\", 'Average time to retrieve icons')\n| summarize Value = avg(CounterValue) by bin(TimeGenerated, 5m), Computer, CounterName\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "Published items and icon retrieval — native value",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-ras-broker-published-items"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Perf\n| where TimeGenerated {TimeRange}\n| where ObjectName == 'Parallels RAS Connection Broker'\n| where CounterName == 'Average time to send client telemetry'\n| summarize Value = avg(CounterValue) by bin(TimeGenerated, 5m), Computer\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "Client telemetry (CEP) — native value",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-ras-broker-telemetry"
+          },
+          {
+            "type": 1,
+            "content": { "json": "#### Secure Gateway — capacity and protocol distribution\nConnection counters and thread capacity reported directly by the RAS Secure Gateway. The native `Total connections` counter is cumulative, so the chart shows its positive delta per 5-minute interval." },
+            "name": "perf-ras-gateway-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Perf\n| where TimeGenerated {TimeRange}\n| where ObjectName == 'Parallels RAS Secure Gateway'\n| where CounterName == 'Total connections'\n| project TimeGenerated, Computer, CounterValue\n| sort by Computer asc, TimeGenerated asc\n| serialize\n| extend PreviousComputer = prev(Computer), PreviousValue = prev(CounterValue)\n| extend Delta = iff(Computer == PreviousComputer and CounterValue >= PreviousValue, CounterValue - PreviousValue, 0.0)\n| summarize NewConnections = sum(Delta) by bin(TimeGenerated, 5m), Computer\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "New Gateway connections per 5 min",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-ras-gateway-total-connections"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Perf\n| where TimeGenerated {TimeRange}\n| where ObjectName == 'Parallels RAS Secure Gateway'\n| where CounterName in ('Total threads', 'Idle threads')\n| summarize Threads = avg(CounterValue) by bin(TimeGenerated, 5m), Computer, CounterName\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "Gateway threads — total and idle (native)",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-ras-gateway-thread-utilization"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Perf\n| where TimeGenerated {TimeRange}\n| where ObjectName == 'Parallels RAS Secure Gateway'\n| where CounterName in ('RDP tunneled sessions', 'RDP SSL tunneled sessions', 'RDP UDP tunneled sessions', 'RDP UDP DTLS tunneled sessions')\n| summarize Sessions = avg(CounterValue) by bin(TimeGenerated, 5m), Computer, CounterName\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "Gateway RDP protocol distribution",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-ras-gateway-rdp"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Perf\n| where TimeGenerated {TimeRange}\n| where ObjectName == 'Parallels RAS Secure Gateway'\n| where CounterName in ('HTTP connections', 'HTTPS connections', 'HTML5 connections', 'HTML5 SSL connections')\n| summarize Connections = avg(CounterValue) by bin(TimeGenerated, 5m), Computer, CounterName\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "Gateway web protocol distribution",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-ras-gateway-web"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Perf\n| where TimeGenerated {TimeRange}\n| where ObjectName == 'Parallels RAS Secure Gateway'\n| where CounterName in ('Client connections', 'Client SSL connections')\n| summarize Connections = avg(CounterValue) by bin(TimeGenerated, 5m), Computer, CounterName\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "Parallels Client connections",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-ras-gateway-client"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Perf\n| where TimeGenerated {TimeRange}\n| where ObjectName == 'Parallels RAS Secure Gateway'\n| where CounterName == 'Cached sockets'\n| summarize Sockets = avg(CounterValue) by bin(TimeGenerated, 5m), Computer\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "Cached sockets — Gateway to Connection Broker",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "customWidth": "50",
+            "name": "perf-ras-gateway-cached-sockets"
+          },
+          {
+            "type": 1,
+            "content": { "json": "#### RAS RDS Agent — native session view\nSession gauges reported by the Parallels agent; kept separate from Windows Terminal Services counters." },
+            "name": "perf-ras-rds-agent-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Perf\n| where TimeGenerated {TimeRange}\n| where ObjectName == 'Parallels RAS RDS Agent'\n| where CounterName in ('Active RDS sessions', 'Disconnected RDS sessions')\n| summarize Sessions = avg(CounterValue) by bin(TimeGenerated, 5m), Computer, CounterName\n| order by TimeGenerated asc",
+              "size": 0,
+              "title": "RAS Agent sessions",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart"
+            },
+            "name": "perf-ras-rds-agent-sessions"
           }
         ]
       },

@@ -23,8 +23,9 @@ az vm identity assign --name "RAS-RDS-12" --resource-group "rg-ras-prod-weu"
 ```
 
 ### Azure Monitor Agent
-When the DCR association is created by Bicep, the AMA extension is installed automatically.
-To force installation manually:
+The Azure Connected Machine agent and the Azure Monitor Agent are separate components.
+The Bicep deployment creates the DCR association but does not declare the AMA extension.
+Install AMA on every monitored server beforehand, or use Azure Policy to enforce it:
 ```powershell
 # Arc
 az connectedmachine extension create -g rg-ras-prod-weu --machine-name RAS-CB-01 `
@@ -100,6 +101,21 @@ Then install the task on the collector host (elevated PowerShell):
 | System | Processor Queue Length, System Up Time |
 | Terminal Services | Active / Inactive / Total Sessions |
 | Process(_Total) | Working Set, Handle Count, Thread Count |
+| Parallels RAS Connection Broker | Client connection, authentication, policy, telemetry, published-item/icon and request-start average times |
+| Parallels RAS Secure Gateway | Connections and protocol distribution, total/idle threads, cached sockets |
+| Parallels RAS RDS Agent | Active and disconnected RDS sessions |
+
+Native RAS counter sets are present only on servers where the corresponding component is
+installed. Confirm their exact Windows paths before deployment:
+
+```powershell
+Get-Counter -ListSet '*Parallels*' |
+  Select-Object CounterSetName, Paths
+```
+
+The native Gateway `Total connections` value is cumulative in the tested RAS 21 environment;
+the Workbook displays its positive delta per 5-minute interval. Connection Broker average-time
+counters remain in their native unit because the Parallels documentation does not specify one.
 
 > **`Computer` name alignment**: AMA writes `Computer` in `Perf`/`Event` as reported by
 > the OS (often FQDN). The collector script normalises with `-ComputerNameStyle` to ensure
@@ -115,5 +131,6 @@ RASSession_CL | summarize count() by SessionState
 RASAudit_CL   | take 10
 Perf  | where TimeGenerated > ago(15m) | summarize count() by Computer
 Event | where TimeGenerated > ago(1h)  | summarize count() by EventLevelName
+Perf  | where TimeGenerated > ago(1h) | where ObjectName startswith "Parallels RAS" | summarize count() by Computer, ObjectName, CounterName
 ```
 (First data in a new custom table can take ~10–15 min to appear.)

@@ -60,6 +60,46 @@ resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
             '\\Process(_Total)\\Thread Count'
           ]
         }
+        {
+          // Native counters registered by Parallels RAS components. Keeping them in a
+          // dedicated source prevents product experience/capacity from being confused
+          // with Windows and Terminal Services health in the Workbook.
+          // Counters absent from a machine role are ignored by AMA.
+          name: 'perfRas'
+          streams: [ 'Microsoft-Perf' ]
+          samplingFrequencyInSeconds: samplingFrequencyInSeconds
+          counterSpecifiers: [
+            '\\Parallels RAS Connection Broker\\Average time for client connection'
+            '\\Parallels RAS Connection Broker\\Average time for user authentication'
+            '\\Parallels RAS Connection Broker\\Average time to retrieve user policy'
+            '\\Parallels RAS Connection Broker\\Average time to send client telemetry'
+            '\\Parallels RAS Connection Broker\\Average time to retrieve user\'s published items'
+            '\\Parallels RAS Connection Broker\\Average time to retrieve icons'
+            '\\Parallels RAS Connection Broker\\Average time to start up a request'
+
+            '\\Parallels RAS Secure Gateway\\Total connections'
+            '\\Parallels RAS Secure Gateway\\Total threads'
+            '\\Parallels RAS Secure Gateway\\RDP tunneled sessions'
+            '\\Parallels RAS Secure Gateway\\RDP SSL tunneled sessions'
+            '\\Parallels RAS Secure Gateway\\HTTP connections'
+            '\\Parallels RAS Secure Gateway\\HTTPS connections'
+            '\\Parallels RAS Secure Gateway\\HTML5 connections'
+            '\\Parallels RAS Secure Gateway\\HTML5 SSL connections'
+            '\\Parallels RAS Secure Gateway\\Device Manager connections'
+            '\\Parallels RAS Secure Gateway\\Device Manager SSL connections'
+            '\\Parallels RAS Secure Gateway\\Wyse connections'
+            '\\Parallels RAS Secure Gateway\\Wyse SSL connections'
+            '\\Parallels RAS Secure Gateway\\RDP UDP tunneled sessions'
+            '\\Parallels RAS Secure Gateway\\RDP UDP DTLS tunneled sessions'
+            '\\Parallels RAS Secure Gateway\\Cached sockets'
+            '\\Parallels RAS Secure Gateway\\Idle threads'
+            '\\Parallels RAS Secure Gateway\\Client connections'
+            '\\Parallels RAS Secure Gateway\\Client SSL connections'
+
+            '\\Parallels RAS RDS Agent\\Active RDS sessions'
+            '\\Parallels RAS RDS Agent\\Disconnected RDS sessions'
+          ]
+        }
       ]
       windowsEventLogs: [
         {
