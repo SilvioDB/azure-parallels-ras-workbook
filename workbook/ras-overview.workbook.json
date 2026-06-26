@@ -255,7 +255,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "RASAgent_CL\n| where isnotempty(AgentVersion)\n| extend NK = tolower(tostring(split(Computer, '.')[0]))\n| summarize arg_max(TimeGenerated, *) by NK, AgentType\n| project Computer, SiteName, AgentType, AgentState, AgentVersion, OSVersion\n| order by Computer asc",
+              "query": "RASAgent_CL\n| where isnotempty(AgentVersion)\n| extend NK = tolower(tostring(split(Computer, '.')[0]))\n| summarize arg_max(TimeGenerated, *) by NK, AgentType\n| extend AgentType = case(AgentType == 'PA', 'Connection Broker', AgentType)\n| project Computer, SiteName, AgentType, AgentState, AgentVersion, OSVersion\n| order by Computer asc",
               "size": 0,
               "title": "Installed agents",
               "showExportToExcel": true,
