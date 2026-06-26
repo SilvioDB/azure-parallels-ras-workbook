@@ -6,7 +6,7 @@ Blog: https://www.silviodibenedetto.com
 IaC package + collector to monitor a **Parallels Remote Application Server** (20.x → 21.x) farm in
 **Azure Monitor / Log Analytics**, with a **six-tab Azure Workbook**.
 
-Current Workbook build: **`2026.06.20.3`**.
+Current Workbook build: **`2026.06.26.1`**.
 
 Scenario: on-premises servers onboarded to **Azure Arc** or Azure VMs, with the
 **Azure Monitor Agent (AMA)** installed and associated with the supplied DCR.
