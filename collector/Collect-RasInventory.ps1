@@ -9,7 +9,7 @@
       auto-rileva Azure Arc (IDENTITY_ENDPOINT, challenge token) oppure Azure VM (IMDS).
     - Legge le credenziali admin RAS da Azure Key Vault (con la stessa MI).
     - Si connette alla farm (New-RASSession) e raccoglie i dati con i cmdlet RAS.
-    - Invia 4 stream JSON alla Logs Ingestion API.
+    - Invia gli stream JSON alla Logs Ingestion API.
 
     Campi RAS verificati sulla documentazione PowerShell API v20 (stabili anche in v21):
       Get-RASAgent      -> *SysInfo: Server, ServerType, AgentState, AgentVer, ServerOS, SiteId, IP, Enabled, CPULoad, MemLoad, ActiveSessions
@@ -49,11 +49,17 @@ param(
     # --- Identity (optional override for user-assigned MI) ---
     [string] $ManagedIdentityClientId = '',
 
-    [string] $LogFile = "$PSScriptRoot\Collect-RasInventory.log"
+    [string] $LogFile = "$PSScriptRoot\Collect-RasInventory.log",
+    [string] $StateFile = "$PSScriptRoot\Collect-RasInventory.state.json"
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+$defaultStateFile = Join-Path $PSScriptRoot 'Collect-RasInventory.state.json'
+if ($DryRun -and $StateFile -eq $defaultStateFile) {
+    $StateFile = Join-Path $OutDir 'Collect-RasInventory.state.json'
+}
 
 # ===========================================================================
 #  NOMI OGGETTI (centralizzati - modificabili qui)
@@ -63,10 +69,11 @@ Set-StrictMode -Version Latest
 #  Non cambiarli isolatamente. Vedi docs/naming.md.
 # ===========================================================================
 $Tables = @{
-    Server  = 'RASServer_CL'
-    Agent   = 'RASAgent_CL'
-    Session = 'RASSession_CL'
-    Audit   = 'RASAudit_CL'
+    Server         = 'RASServer_CL'
+    Agent          = 'RASAgent_CL'
+    Session        = 'RASSession_CL'
+    SessionHistory = 'RASSessionHistory_CL'
+    Audit          = 'RASAudit_CL'
 }
 function Get-StreamName { param([string]$Table) "Custom-$Table" }   # convenzione DCR custom stream
 
@@ -213,6 +220,172 @@ function ConvertTo-IsoUtc {
     try { return ([datetime]$Value).ToUniversalTime().ToString('o') } catch { return $null }
 }
 
+function ConvertFrom-IsoUtc {
+    param($Value)
+    if (-not $Value) { return $null }
+    try { return ([datetime]$Value).ToUniversalTime() } catch { return $null }
+}
+
+function Get-RowValue {
+    param($Row, [string]$Name, $Default = '')
+    if ($null -eq $Row) { return $Default }
+    if ($Row -is [System.Collections.IDictionary]) {
+        if ($Row.Contains($Name) -and $null -ne $Row[$Name]) { return $Row[$Name] }
+        return $Default
+    }
+    if ($Row.PSObject.Properties.Name -contains $Name) {
+        $v = $Row.$Name
+        if ($null -ne $v) { return $v }
+    }
+    return $Default
+}
+
+function Get-SessionKey {
+    param($Row)
+    $computer = "$(Get-RowValue $Row 'Computer')".ToLowerInvariant()
+    $sessionId = "$(Get-RowValue $Row 'SessionId' 0)"
+    $logonTime = "$(Get-RowValue $Row 'LogonTime')"
+    $userName = "$(Get-RowValue $Row 'UserName')".ToLowerInvariant()
+    return "$computer|$sessionId|$logonTime|$userName"
+}
+
+function Get-DurationSeconds {
+    param($Start, $End)
+    $startDt = ConvertFrom-IsoUtc $Start
+    $endDt = ConvertFrom-IsoUtc $End
+    if ($null -eq $startDt -or $null -eq $endDt) { return 0 }
+    return [int][Math]::Max(0, ($endDt - $startDt).TotalSeconds)
+}
+
+function Get-SessionHistoryState {
+    $state = @{}
+    if (-not (Test-Path $StateFile)) { return $state }
+
+    try {
+        $json = Get-Content -Path $StateFile -Raw
+        if (-not $json) { return $state }
+        $stored = $json | ConvertFrom-Json
+        if ($stored.PSObject.Properties.Name -notcontains 'Sessions') { return $state }
+        @($stored.Sessions) | ForEach-Object {
+            $key = "$(Get-RowValue $_ 'SessionKey')"
+            if ($key) { $state[$key] = $_ }
+        }
+    }
+    catch {
+        Write-Log "State file non leggibile ($StateFile): $($_.Exception.Message)" 'WARN'
+    }
+
+    return $state
+}
+
+function Save-SessionHistoryState {
+    param([hashtable]$State)
+    try {
+        $parent = Split-Path -Path $StateFile -Parent
+        if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+        [ordered]@{
+            Version  = 1
+            Updated  = $nowUtc
+            Sessions = @($State.Values)
+        } | ConvertTo-Json -Depth 6 | Set-Content -Path $StateFile -Encoding UTF8
+    }
+    catch {
+        Write-Log "State file non salvato ($StateFile): $($_.Exception.Message)" 'WARN'
+    }
+}
+
+function New-SessionHistoryRow {
+    param(
+        [string]$EventType,
+        [string]$SessionKey,
+        $Current,
+        $Previous,
+        [string]$FirstSeen,
+        [string]$LastSeen
+    )
+
+    [ordered]@{
+        TimeGenerated        = $nowUtc
+        EventTime            = $nowUtc
+        EventType            = $EventType
+        SessionKey           = $SessionKey
+        Computer             = "$(Get-RowValue $Current 'Computer' (Get-RowValue $Previous 'Computer'))"
+        SiteName             = "$(Get-RowValue $Current 'SiteName' (Get-RowValue $Previous 'SiteName'))"
+        SessionId            = [int](Get-RowValue $Current 'SessionId' (Get-RowValue $Previous 'SessionId' 0))
+        UserName             = "$(Get-RowValue $Current 'UserName' (Get-RowValue $Previous 'UserName'))"
+        ClientName           = "$(Get-RowValue $Current 'ClientName' (Get-RowValue $Previous 'ClientName'))"
+        ClientIP             = "$(Get-RowValue $Current 'ClientIP' (Get-RowValue $Previous 'ClientIP'))"
+        SessionState         = "$(Get-RowValue $Current 'SessionState' (Get-RowValue $Previous 'SessionState'))"
+        PreviousSessionState = "$(Get-RowValue $Previous 'SessionState')"
+        SessionType          = "$(Get-RowValue $Current 'SessionType' (Get-RowValue $Previous 'SessionType'))"
+        LogonTime            = (Get-RowValue $Current 'LogonTime' (Get-RowValue $Previous 'LogonTime' $null))
+        FirstSeen            = $FirstSeen
+        LastSeen             = $LastSeen
+        ObservedDurationSec  = (Get-DurationSeconds $FirstSeen $LastSeen)
+        IdleTimeSec          = [int](Get-RowValue $Current 'IdleTimeSec' (Get-RowValue $Previous 'IdleTimeSec' 0))
+        PublishedResource    = "$(Get-RowValue $Current 'PublishedResource' (Get-RowValue $Previous 'PublishedResource'))"
+        Source               = 'CollectorSnapshot'
+    }
+}
+
+function Get-SessionHistoryRows {
+    param([object[]]$Rows)
+
+    $previousState = Get-SessionHistoryState
+    $currentState = @{}
+    $historyRows = New-Object System.Collections.Generic.List[object]
+
+    foreach ($row in @($Rows)) {
+        $key = Get-SessionKey $row
+        if (-not ($key -replace '\|', '')) { continue }
+
+        $previous = if ($previousState.ContainsKey($key)) { $previousState[$key] } else { $null }
+        $firstSeen = if ($previous) { "$(Get-RowValue $previous 'FirstSeen' $nowUtc)" } else { $nowUtc }
+        $previousStateName = "$(Get-RowValue $previous 'SessionState')"
+        $currentStateName = "$(Get-RowValue $row 'SessionState')"
+        $eventType = if (-not $previous) {
+            'Started'
+        }
+        elseif ($previousStateName -ne $currentStateName) {
+            'StateChanged'
+        }
+        else {
+            'Observed'
+        }
+
+        $historyRows.Add((New-SessionHistoryRow -EventType $eventType -SessionKey $key -Current $row -Previous $previous -FirstSeen $firstSeen -LastSeen $nowUtc))
+
+        $currentState[$key] = [ordered]@{
+            SessionKey        = $key
+            Computer          = "$(Get-RowValue $row 'Computer')"
+            SiteName          = "$(Get-RowValue $row 'SiteName')"
+            SessionId         = [int](Get-RowValue $row 'SessionId' 0)
+            UserName          = "$(Get-RowValue $row 'UserName')"
+            ClientName        = "$(Get-RowValue $row 'ClientName')"
+            ClientIP          = "$(Get-RowValue $row 'ClientIP')"
+            SessionState      = $currentStateName
+            SessionType       = "$(Get-RowValue $row 'SessionType')"
+            LogonTime         = (Get-RowValue $row 'LogonTime' $null)
+            FirstSeen         = $firstSeen
+            LastSeen          = $nowUtc
+            IdleTimeSec       = [int](Get-RowValue $row 'IdleTimeSec' 0)
+            PublishedResource = "$(Get-RowValue $row 'PublishedResource')"
+        }
+    }
+
+    foreach ($key in $previousState.Keys) {
+        if ($currentState.ContainsKey($key)) { continue }
+        $previous = $previousState[$key]
+        $firstSeen = "$(Get-RowValue $previous 'FirstSeen' $nowUtc)"
+        $ended = New-SessionHistoryRow -EventType 'EndedInferred' -SessionKey $key -Current $null -Previous $previous -FirstSeen $firstSeen -LastSeen $nowUtc
+        $ended['SessionState'] = 'EndedInferred'
+        $historyRows.Add($ended)
+    }
+
+    Save-SessionHistoryState -State $currentState
+    return $historyRows.ToArray()
+}
+
 $nowUtc = (Get-Date).ToUniversalTime().ToString('o')
 
 # ===========================================================================
@@ -337,6 +510,15 @@ try {
     } catch { Write-Log "Get-RASRDSession: $($_.Exception.Message)" 'WARN' }
     Send-LogStream -Stream (Get-StreamName $Tables.Session) -Rows $sessionRows.ToArray() -MonitorToken $monitorToken
 
+    $sessionHistoryRows = @()
+    try {
+        $sessionHistoryRows = Get-SessionHistoryRows -Rows $sessionRows.ToArray()
+    }
+    catch {
+        Write-Log "RASSessionHistory_CL: $($_.Exception.Message)" 'WARN'
+    }
+    Send-LogStream -Stream (Get-StreamName $Tables.SessionHistory) -Rows @($sessionHistoryRows) -MonitorToken $monitorToken
+
     # -----------------------------------------------------------------------
     #  Audit (best-effort): sessioni admin alla console RAS.
     #  Note: detailed configuration-change audit is not fully exposed via
@@ -369,7 +551,7 @@ try {
     } catch { Write-Log "Get-RASAdminSession: $($_.Exception.Message)" 'WARN' }
     Send-LogStream -Stream (Get-StreamName $Tables.Audit) -Rows $auditRows.ToArray() -MonitorToken $monitorToken
 
-    Write-Log "=== Completato: server=$($serverRows.Count) agent=$($agentRows.Count) session=$($sessionRows.Count) audit=$($auditRows.Count) ==="
+    Write-Log "=== Completato: server=$($serverRows.Count) agent=$($agentRows.Count) session=$($sessionRows.Count) sessionHistory=$(@($sessionHistoryRows).Count) audit=$($auditRows.Count) ==="
 }
 catch {
     Write-Log $_.Exception.Message 'ERROR'

@@ -4,9 +4,9 @@ Designed and developed by **Silvio Di Benedetto**, CEO at Inside Technologies, M
 Blog: https://www.silviodibenedetto.com
 
 IaC package + collector to monitor a **Parallels Remote Application Server** (20.x → 21.x) farm in
-**Azure Monitor / Log Analytics**, with a **six-tab Azure Workbook**.
+**Azure Monitor / Log Analytics**, with a **seven-tab Azure Workbook**.
 
-Current Workbook build: **`2026.06.26.1`**.
+Current Workbook build: **`2026.07.03.1`**.
 
 Scenario: on-premises servers onboarded to **Azure Arc** or Azure VMs, with the
 **Azure Monitor Agent (AMA)** installed and associated with the supplied DCR.
@@ -43,7 +43,9 @@ Data arrives from **two distinct pipelines**:
                                          │   dce-ras-prod-weu                    │
                                          │   dcr-ras-prod-weu-ingest             │
                                          │   → RASServer_CL / RASAgent_CL /      │
-                                         │     RASSession_CL / RASAudit_CL       │
+                                         │     RASSession_CL /                   │
+                                         │     RASSessionHistory_CL /            │
+                                         │     RASAudit_CL                       │
                                          └───────────────────────────────────────┘
 ```
 
@@ -90,18 +92,63 @@ because Parallels does not document their unit.
 
 The script runs on the **Connection Broker** host (the machine with RAS Console installed)
 and queries the entire farm via the RAS API. It sends the JSON payload to the Logs Ingestion
-API through `dce-ras-prod-weu` into 4 custom tables:
+API through `dce-ras-prod-weu` into 5 custom tables:
 
 | Table           | RAS cmdlet source                                                 | Content                          |
 |-----------------|-------------------------------------------------------------------|----------------------------------|
 | `RASServer_CL`  | `Get-RASAgent` → Server, ServerType, AgentState, AgentVer, ServerOS, SiteId | Farm server inventory + role |
 | `RASAgent_CL`   | `Get-RASAgent` → AgentVer, AgentState, ServerOS                   | Agent versions (physical objects only) |
 | `RASSession_CL` | `Get-RASRDSession -Source All`                                    | Active RDP sessions              |
+| `RASSessionHistory_CL` | Snapshot state file + `Get-RASRDSession -Source All`       | Session start, observed, state change and inferred end events |
 | `RASAudit_CL`   | `Get-RASAdminSession` + `Get-RASAdminAccount`                     | RAS admin sessions               |
 
 **Logical objects note**: `Get-RASAgent` also returns logical objects (`RDSGroup`,
 `VDITemplate`, `VDIHostPool`) which have no physical agent. The collector filters them
 by type; KQL queries in the Workbook also exclude them for any already-ingested historical data.
+
+### Replacing local Parallels RAS Reporting Services
+
+The long-term target is to replace the local **Parallels RAS Reporting** stack
+(SQL Server + SQL Server Reporting Services + RAS Reporting database) with Log Analytics
+and Azure Workbooks.
+
+Parallels RAS Reporting stores a richer relational model in SQL tables such as
+`RDSessions`, `RDConnections`, `ApplicationConnections`, `IdleConnections`,
+`Disconnections`, `Devices`, `ProcessorHealth` and `MemoryHealth`. The official
+Reporting Service Guide also documents custom SQL reports and the RAS Reporting
+database schema:
+
+- [Running Parallels RAS reports](https://docs.parallels.com/landing/ras-reporting-service-guide/installing-parallels-ras-reporting/running-parallels-ras-reports)
+- [RAS Reporting Database Schema](https://docs.parallels.com/landing/ras-reporting-service-guide/ras-reporting-database-schema)
+
+This project now includes a **Reports** tab that starts the replacement path using only
+data already available in Log Analytics. The tab behaves as a lightweight report runner:
+select a report type, adjust the available filters, and review only the selected report
+view instead of loading every reporting view at once.
+
+| RAS Reporting area | Current Azure-native coverage | Source |
+| --- | --- | --- |
+| Session activity for users | Good coverage, based on collector-derived session history | `RASSessionHistory_CL` |
+| Sessions by host | Good coverage, based on collector-derived session history | `RASSessionHistory_CL` |
+| Published resource usage | Best effort; uses `PublishedResource`, not exact application process launches | `RASSessionHistory_CL` |
+| Device usage | Partial; client name and IP only | `RASSessionHistory_CL` |
+| Server health | Strong coverage for CPU, memory and session counters | `Perf`, `RASServer_CL` |
+| Gateway and Broker counters | Strong coverage for native RAS performance counters | `Perf` |
+| Logon/logoff/disconnect/reconnect events | Good Windows event coverage, with parsing limitations | `Event` |
+| Application launch history | Not yet equivalent to `ApplicationConnections` | Collector enhancement required |
+| UX Evaluator, latency, bandwidth, connection quality | Not yet equivalent to RAS Reporting | Collector/API investigation required |
+
+The current Reports tab deliberately labels application data as **published resource
+usage**. It does not claim full equivalence with the RAS Reporting
+`ApplicationConnections` table yet.
+
+The collector now includes `RASSessionHistory_CL`, which moves the first Reports views
+from sampled snapshots to durable session history. Further collector iterations should add
+`RASApplicationUsage_CL`, `RASConnectionEvent_CL`, `RASDevice_CL` and
+`RASUserExperience_CL`.
+
+See [Replacing Parallels RAS Reporting Services](docs/ras-reporting-replacement.md)
+for the operational roadmap and data model.
 
 ### Authentication — two levels
 
@@ -126,8 +173,8 @@ All resources are created in a single resource group (configurable), region `wes
 | `dcr-ras-prod-weu-ingest` | Data Collection Rule (Ingest) | Pipeline B → _CL tables |
 | `dcr-ras-prod-weu-ama` | Data Collection Rule (AMA) | Pipeline A → Perf, Event |
 | `kv-ras-prod-weu` | Key Vault (RBAC mode) | RAS secrets (ras-admin-user, ras-admin-password) |
-| `RASServer_CL` … `RASAudit_CL` | Custom Log tables | 4 tables in the workspace |
-| Parallels RAS Workbook | Microsoft.Insights/workbooks | 6 tabs: Overview → Audit |
+| `RASServer_CL` … `RASAudit_CL` | Custom Log tables | 5 tables in the workspace |
+| Parallels RAS Workbook | Microsoft.Insights/workbooks | 7 tabs: Overview → Audit |
 | DCR association × servers | Association on Arc machines | One per server listed in `machines` |
 | Role assignments × MI | Monitoring Metrics Publisher + KV User | On the collector host MI |
 
@@ -342,8 +389,9 @@ arrived; verify AMA, the DCR association and the exact local paths returned by `
 
 ```kusto
 RASServer_CL  | summarize max(TimeGenerated), count() by Computer, Role, AgentState
-RASAgent_CL   | summarize arg_max(TimeGenerated,*) by Computer | project Computer, Role, AgentVersion
+RASAgent_CL   | summarize arg_max(TimeGenerated,*) by Computer | project Computer, AgentType, AgentVersion
 RASSession_CL | summarize count() by SessionState
+RASSessionHistory_CL | summarize count(), dcount(SessionKey) by EventType
 RASAudit_CL   | take 10
 ```
 
@@ -411,7 +459,7 @@ azure-parallels-ras-workbook/
 │  ├─ main.parameters.example.json   # template — copy to main.parameters.json and fill in
 │  └─ modules/
 │     ├─ workspace.bicep             # Log Analytics dedicated workspace
-│     ├─ tables.bicep                # 4 custom _CL tables
+│     ├─ tables.bicep                # 5 custom _CL tables
 │     ├─ dce.bicep                   # Data Collection Endpoint
 │     ├─ dcr-ingest.bicep            # DCR Logs Ingestion API (Pipeline B)
 │     ├─ dcr-ama.bicep               # DCR perf counters + event log (Pipeline A)
@@ -421,13 +469,14 @@ azure-parallels-ras-workbook/
 │     ├─ keyvault.bicep              # Key Vault + Key Vault Secrets User role on MI
 │     └─ workbook.bicep              # Microsoft.Insights/workbooks resource
 ├─ workbook/
-│  └─ ras-overview.workbook.json     # Workbook serializedData (6 tabs, English)
+│  └─ ras-overview.workbook.json     # Workbook serializedData (7 tabs, English)
 ├─ collector/
 │  ├─ Collect-RasInventory.ps1       # RAS data collection → Logs Ingestion API
 │  ├─ Install-RasCollectorTask.ps1   # registers the scheduled task (every 5 min, SYSTEM)
 │  └─ Test-RasFields.ps1             # local dry-run to verify RAS field mapping
 └─ docs/
    ├─ prereqs.md                     # Arc/AMA onboarding, Key Vault, counter list
+   ├─ ras-reporting-replacement.md   # Azure-native replacement plan for RAS Reporting
    ├─ naming.md                      # naming convention + Azure object map
    └─ troubleshooting.md             # known issues and solutions
 ```
@@ -460,6 +509,12 @@ azure-parallels-ras-workbook/
 - **Gateway connection semantics**: `Total connections` is cumulative in the tested RAS 21
   environment. The Workbook calculates positive deltas per 5-minute interval. Total and idle
   threads are shown as separate native series; no undocumented utilization percentage is derived.
+
+- **Reports tab precision**: the Azure-native Reports tab uses `RASSessionHistory_CL`
+  for session activity and duration. Session end is inferred when a previously observed
+  session disappears from the collector snapshot. Exact application launch history,
+  process lifetime, UX Evaluator, latency and bandwidth reports require additional
+  collector tables.
 
 - **DCR region must match Arc**: the DCR must be in the same region as the Arc servers.
   A DCR in a different region causes validation errors or missing data.

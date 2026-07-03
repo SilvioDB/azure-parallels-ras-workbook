@@ -7,7 +7,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## Parallels RAS — Infrastructure Overview\n\n**Workbook build:** `2026.06.26.1`\n\n_Designed and developed by **Silvio Di Benedetto**, CEO at Inside Technologies, Microsoft MVP and Parallels VIPP._\n\n---\n\nThis workbook provides full-stack monitoring of a **Parallels RAS 20.x / 21.x** farm connected to Azure Monitor via two independent pipelines:\n\n- **Pipeline A — Windows telemetry (Azure Monitor Agent):** performance counters (CPU, RAM, disk, network, Terminal Services sessions) and Windows Event Log entries are collected by AMA on all farm servers (Azure Arc-enabled) and streamed into the native `Perf` and `Event` tables.\n- **Pipeline B — RAS-specific data (PowerShell + Logs Ingestion API):** a scheduled PowerShell script running on the Connection Broker queries the Parallels RAS API every 5 minutes and publishes structured JSON payloads to four custom tables: `RASServer_CL` (server inventory and roles), `RASAgent_CL` (agent versions per server), `RASSession_CL` (active RDP sessions), `RASAudit_CL` (administrator sessions and audit events).\n\nCredentials are stored in **Azure Key Vault**; the collector authenticates to Azure using the server's **Managed Identity** — no secrets are stored in scripts or Task Scheduler.\n\n**Tabs:**\n- **Overview** — KPI tiles (monitored servers, active sessions, error events, distinct agent versions) and a per-server summary with CPU, RAM and recent error count.\n- **Events** — Parallels RAS application events only (all providers), filtered from the Windows Event Log by source name.\n- **Services & Versions** — server coverage by role, agent version distribution (donut) and full agent inventory grid.\n- **Performance** — CPU and RAM time-series charts, split by role: Session Host (RDSH) vs other roles (Broker, Gateway, Provider). Session counter chart for RDSH servers.\n- **Sessions** — real-time snapshot of active RDP sessions (last 10 minutes): by state, by host and full session detail table.\n- **Audit** — administrator activity: actions by admin user, events by source, and full audit log grid.\n\nData sources: `Perf` · `Event` (Azure Monitor Agent) + `RASServer_CL` · `RASAgent_CL` · `RASSession_CL` · `RASAudit_CL` (Logs Ingestion API)."
+        "json": "## Parallels RAS — Infrastructure Overview\n\n**Workbook build:** `2026.07.03.1`\n\n_Designed and developed by **Silvio Di Benedetto**, CEO at Inside Technologies, Microsoft MVP and Parallels VIPP._\n\n---\n\nThis workbook provides full-stack monitoring of a **Parallels RAS 20.x / 21.x** farm connected to Azure Monitor via two independent pipelines:\n\n- **Pipeline A — Windows telemetry (Azure Monitor Agent):** performance counters (CPU, RAM, disk, network, Terminal Services sessions) and Windows Event Log entries are collected by AMA on all farm servers (Azure Arc-enabled) and streamed into the native `Perf` and `Event` tables.\n- **Pipeline B — RAS-specific data (PowerShell + Logs Ingestion API):** a scheduled PowerShell script running on the Connection Broker queries the Parallels RAS API every 5 minutes and publishes structured JSON payloads to five custom tables: `RASServer_CL` (server inventory and roles), `RASAgent_CL` (agent versions per server), `RASSession_CL` (active RDP sessions), `RASSessionHistory_CL` (session history derived from snapshots), `RASAudit_CL` (administrator sessions and audit events).\n\nCredentials are stored in **Azure Key Vault**; the collector authenticates to Azure using the server's **Managed Identity** — no secrets are stored in scripts or Task Scheduler.\n\n**Tabs:**\n- **Overview** — KPI tiles (monitored servers, active sessions, error events, distinct agent versions) and a per-server summary with CPU, RAM and recent error count.\n- **Events** — Parallels RAS application events only (all providers), filtered from the Windows Event Log by source name.\n- **Services & Versions** — server coverage by role, agent version distribution (donut) and full agent inventory grid.\n- **Performance** — CPU and RAM time-series charts, split by role: Session Host (RDSH) vs other roles (Broker, Gateway, Provider). Session counter chart for RDSH servers.\n- **Sessions** — real-time snapshot of active RDP sessions (last 10 minutes): by state, by host and full session detail table.\n- **Reports** — Azure-native replacements for the first RAS Reporting views: session activity, published-resource usage and disconnect/reconnect events.\n- **Audit** — administrator activity: actions by admin user, events by source, and full audit log grid.\n\nData sources: `Perf` · `Event` (Azure Monitor Agent) + `RASServer_CL` · `RASAgent_CL` · `RASSession_CL` · `RASSessionHistory_CL` · `RASAudit_CL` (Logs Ingestion API)."
       },
       "name": "header"
     },
@@ -58,6 +58,14 @@
             "type": 1,
             "isHiddenWhenLocked": true,
             "value": "overview"
+          },
+          {
+            "id": "p-reporttype",
+            "version": "KqlParameterItem/1.0",
+            "name": "ReportType",
+            "type": 1,
+            "isHiddenWhenLocked": true,
+            "value": "session_all"
           }
         ],
         "style": "pills",
@@ -77,6 +85,7 @@
           { "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Services & Versions", "subTarget": "services", "style": "link" },
           { "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Performance", "subTarget": "perf", "style": "link" },
           { "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Sessions", "subTarget": "sessions", "style": "link" },
+          { "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Reports", "subTarget": "reports", "style": "link" },
           { "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Audit", "subTarget": "audit", "style": "link" }
         ]
       },
@@ -610,6 +619,344 @@
         ]
       },
       "name": "group-sessions"
+    },
+
+    {
+      "type": 12,
+      "conditionalVisibility": { "parameterName": "tab", "comparison": "isEqualTo", "value": "reports" },
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 1,
+            "content": { "json": "### Reporting replacement\nAzure-native reporting views built from Log Analytics data collected by this workbook. Session activity uses `RASSessionHistory_CL`, a durable history derived from periodic `RASSession_CL` snapshots. Published-resource usage is still best effort; exact application launch history requires application-level collector data." },
+            "name": "reports-header"
+          },
+          {
+            "type": 11,
+            "content": {
+              "version": "LinkItem/1.0",
+              "style": "tabs",
+              "links": [
+                { "cellValue": "ReportType", "linkTarget": "parameter", "linkLabel": "Session activity", "subTarget": "session_all", "style": "link" },
+                { "cellValue": "ReportType", "linkTarget": "parameter", "linkLabel": "User sessions", "subTarget": "session_user", "style": "link" },
+                { "cellValue": "ReportType", "linkTarget": "parameter", "linkLabel": "Host sessions", "subTarget": "session_host", "style": "link" },
+                { "cellValue": "ReportType", "linkTarget": "parameter", "linkLabel": "Published resources", "subTarget": "resource_usage", "style": "link" },
+                { "cellValue": "ReportType", "linkTarget": "parameter", "linkLabel": "Disconnects", "subTarget": "disconnects", "style": "link" }
+              ]
+            },
+            "name": "reports-picker"
+          },
+          {
+            "type": 9,
+            "content": {
+              "version": "KqlParameterItem/1.0",
+              "parameters": [
+                {
+                  "id": "p-report-user",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "ReportUser",
+                  "label": "User",
+                  "type": 2,
+                  "isRequired": false,
+                  "multiSelect": true,
+                  "quote": "'",
+                  "delimiter": ",",
+                  "query": "RASSessionHistory_CL | where TimeGenerated {TimeRange} | where isnotempty(UserName) | distinct UserName | order by UserName asc",
+                  "typeSettings": { "additionalResourceOptions": [ "value::all" ], "showDefault": false },
+                  "value": [ "value::all" ],
+                  "queryType": 0,
+                  "resourceType": "microsoft.operationalinsights/workspaces"
+                },
+                {
+                  "id": "p-report-server",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "ReportServer",
+                  "label": "Server",
+                  "type": 2,
+                  "isRequired": false,
+                  "multiSelect": true,
+                  "quote": "'",
+                  "delimiter": ",",
+                  "query": "RASSessionHistory_CL | where TimeGenerated {TimeRange} | where isnotempty(Computer) | distinct Computer | order by Computer asc",
+                  "typeSettings": { "additionalResourceOptions": [ "value::all" ], "showDefault": false },
+                  "value": [ "value::all" ],
+                  "queryType": 0,
+                  "resourceType": "microsoft.operationalinsights/workspaces"
+                },
+                {
+                  "id": "p-report-resource",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "ReportResource",
+                  "label": "Published resource",
+                  "type": 2,
+                  "isRequired": false,
+                  "multiSelect": true,
+                  "quote": "'",
+                  "delimiter": ",",
+                  "query": "RASSessionHistory_CL | where TimeGenerated {TimeRange} | where isnotempty(PublishedResource) | distinct PublishedResource | order by PublishedResource asc",
+                  "typeSettings": { "additionalResourceOptions": [ "value::all" ], "showDefault": false },
+                  "value": [ "value::all" ],
+                  "queryType": 0,
+                  "resourceType": "microsoft.operationalinsights/workspaces"
+                }
+              ],
+              "style": "pills",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "reports-filters"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "session_all" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let SessionEvents = RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(UserName);\nunion\n(SessionEvents | summarize v = dcount(SessionKey) | extend Metric = 'Observed sessions', o = 1),\n(SessionEvents | summarize v = dcount(UserName) | extend Metric = 'Users', o = 2),\n(SessionEvents | summarize v = dcount(Computer) | extend Metric = 'Hosts', o = 3),\n(SessionEvents | where isnotempty(PublishedResource) | summarize v = dcount(PublishedResource) | extend Metric = 'Published resources', o = 4),\n(SessionEvents | where EventType in ('StateChanged','EndedInferred') | summarize v = count() | extend Metric = 'Session changes', o = 5)\n| order by o asc\n| project Metric, v",
+              "size": 3,
+              "title": "Report indicators",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": { "columnMatch": "Metric", "formatter": 1 },
+                "leftContent": {
+                  "columnMatch": "v",
+                  "formatter": 12,
+                  "formatOptions": { "palette": "blue" },
+                  "numberFormat": { "unit": 17, "options": { "style": "decimal", "maximumFractionDigits": 0 } }
+                },
+                "showBorder": true,
+                "size": "auto"
+              }
+            },
+            "name": "reports-kpis"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "session_all" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(UserName)\n| where EventType in ('Started','StateChanged','EndedInferred')\n| summarize Events = count() by bin(EventTime, 1h), EventType\n| order by EventTime asc",
+              "size": 1,
+              "title": "Session activity trend",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart",
+              "chartSettings": { "showLegend": true }
+            },
+            "customWidth": "65",
+            "name": "reports-session-trend"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "session_all" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(UserName)\n| summarize Sessions = dcount(SessionKey), Hosts = dcount(Computer), Clients = dcount(ClientIP), MaxObservedMinutes = round(max(ObservedDurationSec) / 60.0, 1) by UserName\n| top 15 by Sessions desc",
+              "size": 1,
+              "title": "Top users by observed sessions",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "barchart"
+            },
+            "customWidth": "35",
+            "name": "reports-top-users"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "session_user" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(UserName)\n| where 'value::all' in ({ReportUser}) or UserName in ({ReportUser})\n| summarize Sessions = dcount(SessionKey) by bin(EventTime, 1h), UserName\n| order by EventTime asc",
+              "size": 1,
+              "title": "Session activity for selected user",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart",
+              "chartSettings": { "showLegend": true }
+            },
+            "customWidth": "50",
+            "name": "reports-user-trend"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "session_user" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(UserName)\n| where 'value::all' in ({ReportUser}) or UserName in ({ReportUser})\n| summarize Sessions = dcount(SessionKey), Clients = dcount(ClientIP), Resources = dcount(PublishedResource), MaxObservedMinutes = round(max(ObservedDurationSec) / 60.0, 1) by Computer\n| order by Sessions desc",
+              "size": 1,
+              "title": "Hosts used by selected user",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "barchart"
+            },
+            "customWidth": "50",
+            "name": "reports-user-hosts"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "session_user" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(UserName)\n| where 'value::all' in ({ReportUser}) or UserName in ({ReportUser})\n| summarize FirstSeen = min(FirstSeen), LastSeen = max(LastSeen), Events = count(), ObservedDurationSec = max(ObservedDurationSec), arg_max(TimeGenerated, EventType, UserName, Computer, ClientName, ClientIP, SessionState, PreviousSessionState, SessionType, PublishedResource, IdleTimeSec, SessionId) by SessionKey\n| extend ObservedDuration = LastSeen - FirstSeen\n| project FirstSeen, LastSeen, ObservedDuration, Events, EventType, UserName, Computer, ClientName, ClientIP, SessionState, PreviousSessionState, SessionType, PublishedResource, IdleTimeSec, SessionId\n| order by LastSeen desc",
+              "size": 0,
+              "title": "Session detail for selected user",
+              "showExportToExcel": true,
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "table",
+              "gridSettings": { "filter": true }
+            },
+            "name": "reports-user-detail"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "session_host" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(Computer)\n| where 'value::all' in ({ReportServer}) or Computer in ({ReportServer})\n| summarize Sessions = dcount(SessionKey) by bin(EventTime, 1h), Computer\n| order by EventTime asc",
+              "size": 1,
+              "title": "Session activity for selected host",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart",
+              "chartSettings": { "showLegend": true }
+            },
+            "customWidth": "50",
+            "name": "reports-host-trend"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "session_host" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(Computer)\n| where 'value::all' in ({ReportServer}) or Computer in ({ReportServer})\n| summarize Sessions = dcount(SessionKey), Clients = dcount(ClientIP), Resources = dcount(PublishedResource), MaxObservedMinutes = round(max(ObservedDurationSec) / 60.0, 1) by UserName\n| top 20 by Sessions desc",
+              "size": 1,
+              "title": "Users on selected host",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "barchart"
+            },
+            "customWidth": "50",
+            "name": "reports-host-users"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "session_host" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(Computer)\n| where 'value::all' in ({ReportServer}) or Computer in ({ReportServer})\n| summarize FirstSeen = min(FirstSeen), LastSeen = max(LastSeen), Events = count(), ObservedDurationSec = max(ObservedDurationSec), arg_max(TimeGenerated, EventType, UserName, Computer, ClientName, ClientIP, SessionState, PreviousSessionState, SessionType, PublishedResource, IdleTimeSec, SessionId) by SessionKey\n| extend ObservedDuration = LastSeen - FirstSeen\n| project FirstSeen, LastSeen, ObservedDuration, Events, EventType, UserName, Computer, ClientName, ClientIP, SessionState, PreviousSessionState, SessionType, PublishedResource, IdleTimeSec, SessionId\n| order by LastSeen desc",
+              "size": 0,
+              "title": "Session detail for selected host",
+              "showExportToExcel": true,
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "table",
+              "gridSettings": { "filter": true }
+            },
+            "name": "reports-host-detail"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "resource_usage" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(PublishedResource)\n| where 'value::all' in ({ReportResource}) or PublishedResource in ({ReportResource})\n| summarize LaunchesApprox = dcount(SessionKey), Users = dcount(UserName), Hosts = dcount(Computer), FirstSeen = min(FirstSeen), LastSeen = max(LastSeen), MaxObservedMinutes = round(max(ObservedDurationSec) / 60.0, 1) by PublishedResource\n| top 20 by LaunchesApprox desc",
+              "size": 1,
+              "title": "Published resource usage",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "barchart"
+            },
+            "customWidth": "50",
+            "name": "reports-resource-usage"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "resource_usage" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(PublishedResource)\n| where 'value::all' in ({ReportResource}) or PublishedResource in ({ReportResource})\n| summarize FirstSeen = min(FirstSeen), LastSeen = max(LastSeen), Events = count(), ObservedDurationSec = max(ObservedDurationSec), arg_max(TimeGenerated, EventType, UserName, Computer, ClientName, ClientIP, SessionState, SessionType, IdleTimeSec, SessionId) by PublishedResource, SessionKey\n| extend ObservedDuration = LastSeen - FirstSeen\n| project PublishedResource, UserName, Computer, ClientName, ClientIP, SessionState, EventType, FirstSeen, LastSeen, ObservedDuration, Events, SessionId\n| order by LastSeen desc",
+              "size": 0,
+              "title": "Published resource activity detail",
+              "showExportToExcel": true,
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "table",
+              "gridSettings": { "filter": true }
+            },
+            "name": "reports-resource-detail"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "disconnects" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Event\n| where TimeGenerated {TimeRange}\n| where Source == 'Microsoft-Windows-TerminalServices-LocalSessionManager'\n| where EventID in (21, 23, 24, 25, 40)\n| extend EventType = case(EventID == 21, 'Logon', EventID == 23, 'Logoff', EventID == 24, 'Disconnect', EventID == 25, 'Reconnect', EventID == 40, 'Disconnect reason', 'Other')\n| summarize Events = count() by bin(TimeGenerated, 1h), EventType\n| order by TimeGenerated asc",
+              "size": 1,
+              "title": "Logon, logoff and disconnect events",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "timechart",
+              "chartSettings": { "showLegend": true }
+            },
+            "customWidth": "50",
+            "name": "reports-ts-events"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "session_all" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(UserName)\n| summarize FirstSeen = min(FirstSeen), LastSeen = max(LastSeen), Events = count(), ObservedDurationSec = max(ObservedDurationSec), arg_max(TimeGenerated, EventType, UserName, Computer, ClientName, ClientIP, SessionState, PreviousSessionState, SessionType, PublishedResource, IdleTimeSec, SessionId) by SessionKey\n| extend ObservedDuration = LastSeen - FirstSeen\n| project FirstSeen, LastSeen, ObservedDuration, Events, EventType, UserName, Computer, ClientName, ClientIP, SessionState, PreviousSessionState, SessionType, PublishedResource, IdleTimeSec, SessionId\n| order by LastSeen desc",
+              "size": 0,
+              "title": "Session activity detail",
+              "showExportToExcel": true,
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "table",
+              "gridSettings": {
+                "filter": true,
+                "formatters": [
+                  {
+                    "columnMatch": "SessionState",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        { "operator": "contains", "thresholdValue": "Active", "representation": "success", "text": "{0}{1}" },
+                        { "operator": "contains", "thresholdValue": "Disconnected", "representation": "3", "text": "{0}{1}" },
+                        { "operator": "Default", "representation": "info", "text": "{0}{1}" }
+                      ]
+                    }
+                  },
+                  { "columnMatch": "IdleTimeSec", "formatter": 0, "numberFormat": { "unit": 23, "options": { "style": "decimal" } } }
+                ]
+              }
+            },
+            "name": "reports-session-detail"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "disconnects" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Event\n| where TimeGenerated {TimeRange}\n| where Source == 'Microsoft-Windows-TerminalServices-LocalSessionManager'\n| where EventID in (24, 25, 40)\n| extend EventType = case(EventID == 24, 'Disconnect', EventID == 25, 'Reconnect', EventID == 40, 'Disconnect reason', 'Other')\n| project TimeGenerated, Computer, EventType, EventID, Message = substring(RenderedDescription, 0, 300)\n| order by TimeGenerated desc\n| take 300",
+              "size": 0,
+              "title": "Disconnect / reconnect events",
+              "showExportToExcel": true,
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "table",
+              "gridSettings": { "filter": true }
+            },
+            "name": "reports-disconnect-grid"
+          }
+        ]
+      },
+      "name": "group-reports"
     },
 
     {

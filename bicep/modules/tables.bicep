@@ -85,6 +85,41 @@ resource tblSession 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01'
   }
 }
 
+// --- RASSessionHistory_CL : eventi derivati dalle snapshot sessioni ---
+resource tblSessionHistory 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' = {
+  parent: workspace
+  name: 'RASSessionHistory_CL'
+  properties: {
+    totalRetentionInDays: retentionInDays
+    plan: 'Analytics'
+    schema: {
+      name: 'RASSessionHistory_CL'
+      columns: [
+        { name: 'TimeGenerated', type: 'datetime' }
+        { name: 'EventTime', type: 'datetime' }
+        { name: 'EventType', type: 'string' }             // Started | Observed | StateChanged | EndedInferred
+        { name: 'SessionKey', type: 'string' }
+        { name: 'Computer', type: 'string' }
+        { name: 'SiteName', type: 'string' }
+        { name: 'SessionId', type: 'int' }
+        { name: 'UserName', type: 'string' }
+        { name: 'ClientName', type: 'string' }
+        { name: 'ClientIP', type: 'string' }
+        { name: 'SessionState', type: 'string' }
+        { name: 'PreviousSessionState', type: 'string' }
+        { name: 'SessionType', type: 'string' }
+        { name: 'LogonTime', type: 'datetime' }
+        { name: 'FirstSeen', type: 'datetime' }
+        { name: 'LastSeen', type: 'datetime' }
+        { name: 'ObservedDurationSec', type: 'int' }
+        { name: 'IdleTimeSec', type: 'int' }
+        { name: 'PublishedResource', type: 'string' }
+        { name: 'Source', type: 'string' }
+      ]
+    }
+  }
+}
+
 // --- RASAudit_CL : admin/operator activity ---
 resource tblAudit 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' = {
   parent: workspace
@@ -112,4 +147,5 @@ resource tblAudit 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' =
 output serverStream string = 'Custom-RASServer_CL'
 output agentStream string = 'Custom-RASAgent_CL'
 output sessionStream string = 'Custom-RASSession_CL'
+output sessionHistoryStream string = 'Custom-RASSessionHistory_CL'
 output auditStream string = 'Custom-RASAudit_CL'
