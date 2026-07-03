@@ -88,6 +88,72 @@ resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
           { name: 'Source', type: 'string' }
         ]
       }
+      'Custom-RASApplicationUsage_CL': {
+        columns: [
+          { name: 'TimeGenerated', type: 'datetime' }
+          { name: 'ApplicationName', type: 'string' }
+          { name: 'PublishedResource', type: 'string' }
+          { name: 'UserName', type: 'string' }
+          { name: 'Computer', type: 'string' }
+          { name: 'SessionId', type: 'int' }
+          { name: 'SessionKey', type: 'string' }
+          { name: 'PID', type: 'int' }
+          { name: 'Started', type: 'datetime' }
+          { name: 'Ended', type: 'datetime' }
+          { name: 'DurationSec', type: 'int' }
+          { name: 'Source', type: 'string' }
+        ]
+      }
+      'Custom-RASConnectionEvent_CL': {
+        columns: [
+          { name: 'TimeGenerated', type: 'datetime' }
+          { name: 'EventTime', type: 'datetime' }
+          { name: 'EventType', type: 'string' }
+          { name: 'UserName', type: 'string' }
+          { name: 'Computer', type: 'string' }
+          { name: 'SessionId', type: 'int' }
+          { name: 'SessionKey', type: 'string' }
+          { name: 'ClientName', type: 'string' }
+          { name: 'ClientIP', type: 'string' }
+          { name: 'PublishedResource', type: 'string' }
+          { name: 'TransportProtocol', type: 'string' }
+          { name: 'DisconnectReason', type: 'string' }
+          { name: 'SourceEventId', type: 'int' }
+          { name: 'Source', type: 'string' }
+        ]
+      }
+      'Custom-RASDevice_CL': {
+        columns: [
+          { name: 'TimeGenerated', type: 'datetime' }
+          { name: 'DeviceKey', type: 'string' }
+          { name: 'ClientName', type: 'string' }
+          { name: 'ClientIP', type: 'string' }
+          { name: 'UserName', type: 'string' }
+          { name: 'OperatingSystem', type: 'string' }
+          { name: 'ClientVersion', type: 'string' }
+          { name: 'Vendor', type: 'string' }
+          { name: 'Model', type: 'string' }
+          { name: 'LastSeen', type: 'datetime' }
+          { name: 'Source', type: 'string' }
+        ]
+      }
+      'Custom-RASUserExperience_CL': {
+        columns: [
+          { name: 'TimeGenerated', type: 'datetime' }
+          { name: 'SampleTime', type: 'datetime' }
+          { name: 'MetricName', type: 'string' }
+          { name: 'MetricValue', type: 'real' }
+          { name: 'Unit', type: 'string' }
+          { name: 'UserName', type: 'string' }
+          { name: 'Computer', type: 'string' }
+          { name: 'SessionId', type: 'int' }
+          { name: 'SessionKey', type: 'string' }
+          { name: 'Provider', type: 'string' }
+          { name: 'HostPool', type: 'string' }
+          { name: 'TransportProtocol', type: 'string' }
+          { name: 'Source', type: 'string' }
+        ]
+      }
       'Custom-RASAudit_CL': {
         columns: [
           { name: 'TimeGenerated', type: 'datetime' }
@@ -134,6 +200,30 @@ resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
         destinations: [ 'laDest' ]
         transformKql: 'source'
         outputStream: 'Custom-RASSessionHistory_CL'
+      }
+      {
+        streams: [ 'Custom-RASApplicationUsage_CL' ]
+        destinations: [ 'laDest' ]
+        transformKql: 'source'
+        outputStream: 'Custom-RASApplicationUsage_CL'
+      }
+      {
+        streams: [ 'Custom-RASConnectionEvent_CL' ]
+        destinations: [ 'laDest' ]
+        transformKql: 'source'
+        outputStream: 'Custom-RASConnectionEvent_CL'
+      }
+      {
+        streams: [ 'Custom-RASDevice_CL' ]
+        destinations: [ 'laDest' ]
+        transformKql: 'source'
+        outputStream: 'Custom-RASDevice_CL'
+      }
+      {
+        streams: [ 'Custom-RASUserExperience_CL' ]
+        destinations: [ 'laDest' ]
+        transformKql: 'source'
+        outputStream: 'Custom-RASUserExperience_CL'
       }
       {
         streams: [ 'Custom-RASAudit_CL' ]

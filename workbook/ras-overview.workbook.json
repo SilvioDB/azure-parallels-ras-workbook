@@ -7,7 +7,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## Parallels RAS — Infrastructure Overview\n\n**Workbook build:** `2026.07.03.1`\n\n_Designed and developed by **Silvio Di Benedetto**, CEO at Inside Technologies, Microsoft MVP and Parallels VIPP._\n\n---\n\nThis workbook provides full-stack monitoring of a **Parallels RAS 20.x / 21.x** farm connected to Azure Monitor via two independent pipelines:\n\n- **Pipeline A — Windows telemetry (Azure Monitor Agent):** performance counters (CPU, RAM, disk, network, Terminal Services sessions) and Windows Event Log entries are collected by AMA on all farm servers (Azure Arc-enabled) and streamed into the native `Perf` and `Event` tables.\n- **Pipeline B — RAS-specific data (PowerShell + Logs Ingestion API):** a scheduled PowerShell script running on the Connection Broker queries the Parallels RAS API every 5 minutes and publishes structured JSON payloads to five custom tables: `RASServer_CL` (server inventory and roles), `RASAgent_CL` (agent versions per server), `RASSession_CL` (active RDP sessions), `RASSessionHistory_CL` (session history derived from snapshots), `RASAudit_CL` (administrator sessions and audit events).\n\nCredentials are stored in **Azure Key Vault**; the collector authenticates to Azure using the server's **Managed Identity** — no secrets are stored in scripts or Task Scheduler.\n\n**Tabs:**\n- **Overview** — KPI tiles (monitored servers, active sessions, error events, distinct agent versions) and a per-server summary with CPU, RAM and recent error count.\n- **Events** — Parallels RAS application events only (all providers), filtered from the Windows Event Log by source name.\n- **Services & Versions** — server coverage by role, agent version distribution (donut) and full agent inventory grid.\n- **Performance** — CPU and RAM time-series charts, split by role: Session Host (RDSH) vs other roles (Broker, Gateway, Provider). Session counter chart for RDSH servers.\n- **Sessions** — real-time snapshot of active RDP sessions (last 10 minutes): by state, by host and full session detail table.\n- **Reports** — Azure-native replacements for the first RAS Reporting views: session activity, published-resource usage and disconnect/reconnect events.\n- **Audit** — administrator activity: actions by admin user, events by source, and full audit log grid.\n\nData sources: `Perf` · `Event` (Azure Monitor Agent) + `RASServer_CL` · `RASAgent_CL` · `RASSession_CL` · `RASSessionHistory_CL` · `RASAudit_CL` (Logs Ingestion API)."
+        "json": "## Parallels RAS — Infrastructure Overview\n\n**Workbook build:** `2026.07.03.1`\n\n_Designed and developed by **Silvio Di Benedetto**, CEO at Inside Technologies, Microsoft MVP and Parallels VIPP._\n\n---\n\nThis workbook provides full-stack monitoring of a **Parallels RAS 20.x / 21.x** farm connected to Azure Monitor via two independent pipelines:\n\n- **Pipeline A — Windows telemetry (Azure Monitor Agent):** performance counters (CPU, RAM, disk, network, Terminal Services sessions) and Windows Event Log entries are collected by AMA on all farm servers (Azure Arc-enabled) and streamed into the native `Perf` and `Event` tables.\n- **Pipeline B — RAS-specific data (PowerShell + Logs Ingestion API):** a scheduled PowerShell script running on the Connection Broker queries the Parallels RAS API every 5 minutes and currently publishes structured JSON payloads to five custom tables: `RASServer_CL` (server inventory and roles), `RASAgent_CL` (agent versions per server), `RASSession_CL` (active RDP sessions), `RASSessionHistory_CL` (session history derived from snapshots), `RASAudit_CL` (administrator sessions and audit events). The deployment also prepares report-grade extension tables for application usage, connection events, devices and user experience.\n\nCredentials are stored in **Azure Key Vault**; the collector authenticates to Azure using the server's **Managed Identity** — no secrets are stored in scripts or Task Scheduler.\n\n**Tabs:**\n- **Overview** — KPI tiles (monitored servers, active sessions, error events, distinct agent versions) and a per-server summary with CPU, RAM and recent error count.\n- **Events** — Parallels RAS application events only (all providers), filtered from the Windows Event Log by source name.\n- **Services & Versions** — server coverage by role, agent version distribution (donut) and full agent inventory grid.\n- **Performance** — CPU and RAM time-series charts, split by role: Session Host (RDSH) vs other roles (Broker, Gateway, Provider). Session counter chart for RDSH servers.\n- **Sessions** — real-time snapshot of active RDP sessions (last 10 minutes): by state, by host and full session detail table.\n- **Reports** — Azure-native replacements for the first RAS Reporting views: usage overview, session activity, published-resource usage and disconnect/reconnect events.\n- **Audit** — administrator activity: actions by admin user, events by source, and full audit log grid.\n\nData sources: `Perf` · `Event` (Azure Monitor Agent) + `RASServer_CL` · `RASAgent_CL` · `RASSession_CL` · `RASSessionHistory_CL` · `RASAudit_CL` (active Logs Ingestion API streams). Prepared extension tables: `RASApplicationUsage_CL` · `RASConnectionEvent_CL` · `RASDevice_CL` · `RASUserExperience_CL`."
       },
       "name": "header"
     },
@@ -65,7 +65,7 @@
             "name": "ReportType",
             "type": 1,
             "isHiddenWhenLocked": true,
-            "value": "session_all"
+            "value": "usage_overview"
           }
         ],
         "style": "pills",
@@ -639,6 +639,7 @@
               "version": "LinkItem/1.0",
               "style": "tabs",
               "links": [
+                { "cellValue": "ReportType", "linkTarget": "parameter", "linkLabel": "Usage overview", "subTarget": "usage_overview", "style": "link" },
                 { "cellValue": "ReportType", "linkTarget": "parameter", "linkLabel": "Session activity", "subTarget": "session_all", "style": "link" },
                 { "cellValue": "ReportType", "linkTarget": "parameter", "linkLabel": "User sessions", "subTarget": "session_user", "style": "link" },
                 { "cellValue": "ReportType", "linkTarget": "parameter", "linkLabel": "Host sessions", "subTarget": "session_host", "style": "link" },
@@ -707,6 +708,77 @@
               "resourceType": "microsoft.operationalinsights/workspaces"
             },
             "name": "reports-filters"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "usage_overview" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let SessionRollup = RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(UserName)\n| summarize DurationSec = max(ObservedDurationSec), arg_max(TimeGenerated, UserName, Computer, ClientIP, PublishedResource) by SessionKey;\nunion\n(SessionRollup | summarize v = count() | extend Metric = 'Observed sessions', o = 1),\n(SessionRollup | summarize v = dcount(UserName) | extend Metric = 'Users', o = 2),\n(SessionRollup | where isnotempty(PublishedResource) | summarize v = dcount(PublishedResource) | extend Metric = 'Published resources', o = 3),\n(SessionRollup | summarize v = round(sum(DurationSec) / 3600.0, 1) | extend Metric = 'Observed hours', o = 4)\n| order by o asc\n| project Metric, v",
+              "size": 3,
+              "title": "Usage indicators",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": { "columnMatch": "Metric", "formatter": 1 },
+                "leftContent": {
+                  "columnMatch": "v",
+                  "formatter": 12,
+                  "formatOptions": { "palette": "blue" },
+                  "numberFormat": { "unit": 17, "options": { "style": "decimal", "maximumFractionDigits": 1 } }
+                },
+                "showBorder": true,
+                "size": "auto"
+              }
+            },
+            "name": "reports-usage-kpis"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "usage_overview" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(UserName)\n| summarize DurationSec = max(ObservedDurationSec), arg_max(TimeGenerated, UserName, Computer, ClientIP, PublishedResource) by SessionKey\n| summarize Sessions = count(), TotalObservedHours = round(sum(DurationSec) / 3600.0, 2), Hosts = dcount(Computer), Resources = dcount(PublishedResource) by UserName\n| top 20 by TotalObservedHours desc",
+              "size": 1,
+              "title": "Top users by observed time",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "barchart"
+            },
+            "customWidth": "50",
+            "name": "reports-usage-top-users"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "usage_overview" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(PublishedResource)\n| summarize DurationSec = max(ObservedDurationSec), arg_max(TimeGenerated, UserName, Computer, ClientIP, PublishedResource) by SessionKey\n| summarize Sessions = count(), Users = dcount(UserName), Hosts = dcount(Computer), TotalObservedHours = round(sum(DurationSec) / 3600.0, 2) by PublishedResource\n| top 20 by Sessions desc",
+              "size": 1,
+              "title": "Top published resources",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "barchart"
+            },
+            "customWidth": "50",
+            "name": "reports-usage-top-resources"
+          },
+          {
+            "type": 3,
+            "conditionalVisibility": { "parameterName": "ReportType", "comparison": "isEqualTo", "value": "usage_overview" },
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "RASSessionHistory_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(UserName)\n| summarize FirstSeen = min(FirstSeen), LastSeen = max(LastSeen), Events = count(), ObservedDurationSec = max(ObservedDurationSec), arg_max(TimeGenerated, EventType, UserName, Computer, ClientName, ClientIP, SessionState, PublishedResource, SessionId) by SessionKey\n| extend ObservedHours = round(ObservedDurationSec / 3600.0, 2)\n| project UserName, PublishedResource, Computer, ClientName, ClientIP, SessionState, EventType, FirstSeen, LastSeen, ObservedHours, Events, SessionId\n| order by LastSeen desc\n| take 500",
+              "size": 0,
+              "title": "Usage detail",
+              "showExportToExcel": true,
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "table",
+              "gridSettings": { "filter": true }
+            },
+            "name": "reports-usage-detail"
           },
           {
             "type": 3,

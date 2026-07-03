@@ -21,6 +21,9 @@ report. It uses data that is collected by the current deployment:
 
 | View | Status | Source |
 | --- | --- | --- |
+| Usage overview | Available | `RASSessionHistory_CL` |
+| Top users by observed time | Available | `RASSessionHistory_CL` |
+| Top published resources | Available | `RASSessionHistory_CL.PublishedResource` |
 | Session activity trend | Available | `RASSessionHistory_CL` |
 | Top users by observed sessions | Available | `RASSessionHistory_CL` |
 | Published resource usage | Best effort | `RASSessionHistory_CL.PublishedResource` |
@@ -31,6 +34,7 @@ report. It uses data that is collected by the current deployment:
 
 Available report-runner modes:
 
+- Usage overview
 - Session activity
 - User sessions
 - Host sessions
@@ -63,15 +67,17 @@ The current Workbook cannot yet provide exact equivalents for:
 
 ## Collector tables
 
-`RASSessionHistory_CL` is implemented. Additional report-grade tables are still planned.
+`RASSessionHistory_CL` is implemented and populated by the current collector. Additional
+report-grade tables are already provisioned in Bicep/DCR, but remain empty until the
+collector is extended to publish those streams.
 
 | Table | Purpose |
 | --- | --- |
 | `RASSessionHistory_CL` | Implemented: session start, state change, last seen and inferred end events |
-| `RASConnectionEvent_CL` | Logon, logoff, disconnect, reconnect and disconnect reason events |
-| `RASApplicationUsage_CL` | Published resource or application usage events |
-| `RASDevice_CL` | Client/device inventory observed through sessions |
-| `RASUserExperience_CL` | UX, latency, bandwidth and connection quality if exposed by RAS APIs/counters |
+| `RASConnectionEvent_CL` | Prepared: logon, logoff, disconnect, reconnect and disconnect reason events |
+| `RASApplicationUsage_CL` | Prepared: published resource or application usage events |
+| `RASDevice_CL` | Prepared: client/device inventory observed through sessions |
+| `RASUserExperience_CL` | Prepared: UX, latency, bandwidth and connection quality if exposed by RAS APIs/counters |
 
 ## Collector approach
 
@@ -119,6 +125,7 @@ resource usage** and avoid presenting it as exact application launch history.
 The Reports tab should remain report-like:
 
 - a single report picker at the top;
+- a default **Usage overview** view for top users and top published resources;
 - visible filters for period, user, server and published resource;
 - compact KPI tiles at the top;
 - trend charts immediately below;

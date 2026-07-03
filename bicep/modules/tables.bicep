@@ -120,6 +120,116 @@ resource tblSessionHistory 'Microsoft.OperationalInsights/workspaces/tables@2022
   }
 }
 
+// --- RASApplicationUsage_CL : utilizzo applicazioni / published resource ---
+resource tblApplicationUsage 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' = {
+  parent: workspace
+  name: 'RASApplicationUsage_CL'
+  properties: {
+    totalRetentionInDays: retentionInDays
+    plan: 'Analytics'
+    schema: {
+      name: 'RASApplicationUsage_CL'
+      columns: [
+        { name: 'TimeGenerated', type: 'datetime' }
+        { name: 'ApplicationName', type: 'string' }
+        { name: 'PublishedResource', type: 'string' }
+        { name: 'UserName', type: 'string' }
+        { name: 'Computer', type: 'string' }
+        { name: 'SessionId', type: 'int' }
+        { name: 'SessionKey', type: 'string' }
+        { name: 'PID', type: 'int' }
+        { name: 'Started', type: 'datetime' }
+        { name: 'Ended', type: 'datetime' }
+        { name: 'DurationSec', type: 'int' }
+        { name: 'Source', type: 'string' }
+      ]
+    }
+  }
+}
+
+// --- RASConnectionEvent_CL : logon, logoff, disconnect, reconnect ---
+resource tblConnectionEvent 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' = {
+  parent: workspace
+  name: 'RASConnectionEvent_CL'
+  properties: {
+    totalRetentionInDays: retentionInDays
+    plan: 'Analytics'
+    schema: {
+      name: 'RASConnectionEvent_CL'
+      columns: [
+        { name: 'TimeGenerated', type: 'datetime' }
+        { name: 'EventTime', type: 'datetime' }
+        { name: 'EventType', type: 'string' }
+        { name: 'UserName', type: 'string' }
+        { name: 'Computer', type: 'string' }
+        { name: 'SessionId', type: 'int' }
+        { name: 'SessionKey', type: 'string' }
+        { name: 'ClientName', type: 'string' }
+        { name: 'ClientIP', type: 'string' }
+        { name: 'PublishedResource', type: 'string' }
+        { name: 'TransportProtocol', type: 'string' }
+        { name: 'DisconnectReason', type: 'string' }
+        { name: 'SourceEventId', type: 'int' }
+        { name: 'Source', type: 'string' }
+      ]
+    }
+  }
+}
+
+// --- RASDevice_CL : inventory dispositivi/client osservati ---
+resource tblDevice 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' = {
+  parent: workspace
+  name: 'RASDevice_CL'
+  properties: {
+    totalRetentionInDays: retentionInDays
+    plan: 'Analytics'
+    schema: {
+      name: 'RASDevice_CL'
+      columns: [
+        { name: 'TimeGenerated', type: 'datetime' }
+        { name: 'DeviceKey', type: 'string' }
+        { name: 'ClientName', type: 'string' }
+        { name: 'ClientIP', type: 'string' }
+        { name: 'UserName', type: 'string' }
+        { name: 'OperatingSystem', type: 'string' }
+        { name: 'ClientVersion', type: 'string' }
+        { name: 'Vendor', type: 'string' }
+        { name: 'Model', type: 'string' }
+        { name: 'LastSeen', type: 'datetime' }
+        { name: 'Source', type: 'string' }
+      ]
+    }
+  }
+}
+
+// --- RASUserExperience_CL : latency, bandwidth, quality, UX evaluator ---
+resource tblUserExperience 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' = {
+  parent: workspace
+  name: 'RASUserExperience_CL'
+  properties: {
+    totalRetentionInDays: retentionInDays
+    plan: 'Analytics'
+    schema: {
+      name: 'RASUserExperience_CL'
+      columns: [
+        { name: 'TimeGenerated', type: 'datetime' }
+        { name: 'SampleTime', type: 'datetime' }
+        { name: 'MetricName', type: 'string' }
+        { name: 'MetricValue', type: 'real' }
+        { name: 'Unit', type: 'string' }
+        { name: 'UserName', type: 'string' }
+        { name: 'Computer', type: 'string' }
+        { name: 'SessionId', type: 'int' }
+        { name: 'SessionKey', type: 'string' }
+        { name: 'Provider', type: 'string' }
+        { name: 'HostPool', type: 'string' }
+        { name: 'TransportProtocol', type: 'string' }
+        { name: 'Source', type: 'string' }
+      ]
+    }
+  }
+}
+
 // --- RASAudit_CL : admin/operator activity ---
 resource tblAudit 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' = {
   parent: workspace
@@ -148,4 +258,8 @@ output serverStream string = 'Custom-RASServer_CL'
 output agentStream string = 'Custom-RASAgent_CL'
 output sessionStream string = 'Custom-RASSession_CL'
 output sessionHistoryStream string = 'Custom-RASSessionHistory_CL'
+output applicationUsageStream string = 'Custom-RASApplicationUsage_CL'
+output connectionEventStream string = 'Custom-RASConnectionEvent_CL'
+output deviceStream string = 'Custom-RASDevice_CL'
+output userExperienceStream string = 'Custom-RASUserExperience_CL'
 output auditStream string = 'Custom-RASAudit_CL'

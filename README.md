@@ -92,7 +92,9 @@ because Parallels does not document their unit.
 
 The script runs on the **Connection Broker** host (the machine with RAS Console installed)
 and queries the entire farm via the RAS API. It sends the JSON payload to the Logs Ingestion
-API through `dce-ras-prod-weu` into 5 custom tables:
+API through `dce-ras-prod-weu`. The deployment now provisions 9 custom tables; the
+current collector populates the first 5 and leaves the report-grade extension tables
+ready for later ingestion without another schema deployment:
 
 | Table           | RAS cmdlet source                                                 | Content                          |
 |-----------------|-------------------------------------------------------------------|----------------------------------|
@@ -101,6 +103,10 @@ API through `dce-ras-prod-weu` into 5 custom tables:
 | `RASSession_CL` | `Get-RASRDSession -Source All`                                    | Active RDP sessions              |
 | `RASSessionHistory_CL` | Snapshot state file + `Get-RASRDSession -Source All`       | Session start, observed, state change and inferred end events |
 | `RASAudit_CL`   | `Get-RASAdminSession` + `Get-RASAdminAccount`                     | RAS admin sessions               |
+| `RASApplicationUsage_CL` | Prepared stream/table                                    | Future application or published-resource launch events |
+| `RASConnectionEvent_CL` | Prepared stream/table                                      | Future normalized logon, logoff, disconnect and reconnect events |
+| `RASDevice_CL` | Prepared stream/table                                               | Future client/device inventory |
+| `RASUserExperience_CL` | Prepared stream/table                                      | Future UX, latency, bandwidth and quality metrics |
 
 **Logical objects note**: `Get-RASAgent` also returns logical objects (`RDSGroup`,
 `VDITemplate`, `VDIHostPool`) which have no physical agent. The collector filters them
@@ -121,10 +127,11 @@ database schema:
 - [Running Parallels RAS reports](https://docs.parallels.com/landing/ras-reporting-service-guide/installing-parallels-ras-reporting/running-parallels-ras-reports)
 - [RAS Reporting Database Schema](https://docs.parallels.com/landing/ras-reporting-service-guide/ras-reporting-database-schema)
 
-This project now includes a **Reports** tab that starts the replacement path using only
-data already available in Log Analytics. The tab behaves as a lightweight report runner:
+This project now includes a **Reports** tab that starts the replacement path using data
+already available in Log Analytics. The tab behaves as a lightweight report runner:
 select a report type, adjust the available filters, and review only the selected report
-view instead of loading every reporting view at once.
+view instead of loading every reporting view at once. The default view is **Usage
+overview**, which combines top users, top published resources and exportable detail.
 
 | RAS Reporting area | Current Azure-native coverage | Source |
 | --- | --- | --- |
@@ -143,9 +150,10 @@ usage**. It does not claim full equivalence with the RAS Reporting
 `ApplicationConnections` table yet.
 
 The collector now includes `RASSessionHistory_CL`, which moves the first Reports views
-from sampled snapshots to durable session history. Further collector iterations should add
-`RASApplicationUsage_CL`, `RASConnectionEvent_CL`, `RASDevice_CL` and
-`RASUserExperience_CL`.
+from sampled snapshots to durable session history. The schema and DCR are already prepared
+for `RASApplicationUsage_CL`, `RASConnectionEvent_CL`, `RASDevice_CL` and
+`RASUserExperience_CL`, so future collector iterations can populate them without another
+table/DCR deployment.
 
 See [Replacing Parallels RAS Reporting Services](docs/ras-reporting-replacement.md)
 for the operational roadmap and data model.
@@ -396,6 +404,9 @@ RASAudit_CL   | take 10
 ```
 
 First data in a new custom table can take ~5–15 min to appear.
+The prepared extension tables (`RASApplicationUsage_CL`, `RASConnectionEvent_CL`,
+`RASDevice_CL`, `RASUserExperience_CL`) remain empty until the collector is extended to
+publish those streams.
 
 ---
 
@@ -459,7 +470,7 @@ azure-parallels-ras-workbook/
 │  ├─ main.parameters.example.json   # template — copy to main.parameters.json and fill in
 │  └─ modules/
 │     ├─ workspace.bicep             # Log Analytics dedicated workspace
-│     ├─ tables.bicep                # 5 custom _CL tables
+│     ├─ tables.bicep                # 9 custom _CL tables
 │     ├─ dce.bicep                   # Data Collection Endpoint
 │     ├─ dcr-ingest.bicep            # DCR Logs Ingestion API (Pipeline B)
 │     ├─ dcr-ama.bicep               # DCR perf counters + event log (Pipeline A)
@@ -511,10 +522,11 @@ azure-parallels-ras-workbook/
   threads are shown as separate native series; no undocumented utilization percentage is derived.
 
 - **Reports tab precision**: the Azure-native Reports tab uses `RASSessionHistory_CL`
-  for session activity and duration. Session end is inferred when a previously observed
-  session disappears from the collector snapshot. Exact application launch history,
-  process lifetime, UX Evaluator, latency and bandwidth reports require additional
-  collector tables.
+  for usage overview, top users, top published resources, session activity and duration.
+  Session end is inferred when a previously observed session disappears from the collector
+  snapshot. Exact application launch history, process lifetime, UX Evaluator, latency and
+  bandwidth reports require additional collector logic; the target tables and DCR streams
+  are already provisioned.
 
 - **DCR region must match Arc**: the DCR must be in the same region as the Arc servers.
   A DCR in a different region causes validation errors or missing data.
